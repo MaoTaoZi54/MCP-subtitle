@@ -1,0 +1,3 @@
+# Octop 加载插件时会自动 pip install 本文件。
+# PyYAML 为配置解析所需（octop-harness 自身已依赖，正常环境已预装，此处为保险声明）。
+PyYAML>=6.0
