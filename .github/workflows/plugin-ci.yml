@@ -1,0 +1,59 @@
+name: Plugin CI
+
+on:
+  push:
+    paths:
+      - "nas-octop-plugin/**"
+      - "scripts/**"
+      - "package_all.py"
+      - ".github/workflows/plugin-ci.yml"
+  pull_request:
+    paths:
+      - "nas-octop-plugin/**"
+      - "scripts/**"
+      - "package_all.py"
+  workflow_dispatch:
+
+jobs:
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml pytest curl_cffi
+
+      - name: Version single source + kernel hash
+        run: python scripts/check_versions.py
+
+      - name: Plugin tests
+        run: python -m pytest nas-octop-plugin/tests -q
+
+      - name: Plugin load smoke
+        run: python nas-octop-plugin/tests/local_load_check.py
+
+      - name: Pack plugin zip
+        run: python package_all.py
+
+      - name: Checksums
+        run: |
+          cd nas-octop-plugin/dist
+          sha256sum nas-media-*.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload plugin package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nas-media-plugin
+          path: |
+            nas-octop-plugin/dist/nas-media-*.zip
+            nas-octop-plugin/dist/SHA256SUMS
+          if-no-files-found: error
