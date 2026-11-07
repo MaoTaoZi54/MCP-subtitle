@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NAS 媒体工具箱</title>
+<meta name="theme-color" content="#fbf4ee" id="theme-color">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<script src="/static/mode.js"></script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app" hidden>
+  <aside class="sidebar">
+    <div class="brand"><img src="/static/icon.svg" alt=""><div class="brand-text"><strong>NAS 媒体工具箱</strong><small id="brand-version">独立应用版</small><small class="brand-tagline">把媒体库打理得清清爽爽</small></div></div>
+    <nav id="nav"></nav>
+    <div class="sidebar-foot">
+      <span id="auth-badge" class="badge"></span>
+      <button type="button" class="ghost small" id="logout-btn">退出登录</button>
+    </div>
+  </aside>
+  <main>
+    <header class="topbar">
+      <div class="topbar-title">
+        <button type="button" class="nav-toggle" id="nav-toggle" aria-label="打开导航" aria-expanded="false" aria-controls="nav">☰</button>
+        <div>
+          <h1 id="page-title">概览</h1>
+          <p class="muted" id="page-subtitle"></p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <div class="mode-switch" id="mode-switch" role="group" aria-label="界面风格">
+          <span class="mode-label">界面</span>
+          <button type="button" data-mode="pro" aria-pressed="false">专业版</button>
+          <button type="button" data-mode="friendly" aria-pressed="true">友好版</button>
+        </div>
+        <button type="button" class="ghost small" id="tool-search-btn" title="搜索功能（Ctrl/⌘ + K）">搜索工具 ⌘K</button>
+        <button type="button" class="ghost small" id="theme-btn" title="切换配色：自动 / 浅色 / 深色">配色 · 自动</button>
+        <button type="button" class="ghost small jobs-ind" id="jobs-ind" hidden>0 个任务进行中</button>
+        <span id="health" class="badge"></span>
+        <button type="button" class="ghost" id="refresh-btn">刷新</button>
+      </div>
+    </header>
+    <section id="view" class="view"></section>
+  </main>
+</div>
+<div id="nav-mask" class="nav-mask" aria-hidden="true" hidden></div>
+<div id="boot" class="boot"><div class="spinner"></div><p>正在连接 NAS 媒体工具箱…</p></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
