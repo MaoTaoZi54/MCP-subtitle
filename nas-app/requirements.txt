@@ -1,0 +1,6 @@
+# 运行依赖（Docker 镜像与飞牛 FPK 共用）
+PyYAML>=6.0
+# SeedHub 站点的 Cloudflare TLS 指纹需要 curl_cffi；缺失时仅 seedhub_* 工具降级
+curl_cffi>=0.10
+# 内置 MCP Streamable HTTP 端点；与 Octop 自带客户端同版本，避免协议差异
+mcp==1.28.1

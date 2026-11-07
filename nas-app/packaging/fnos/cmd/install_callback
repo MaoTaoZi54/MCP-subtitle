@@ -1,0 +1,22 @@
+#!/bin/bash
+# 文件写入后：准备镜像（优先使用安装包内离线 tar，否则在线拉取）。
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=common.sh
+. "$SCRIPT_DIR/common.sh"
+
+command -v docker >/dev/null 2>&1 || {
+  log_error "未找到 docker，无法安装 NAS 媒体工具箱。"
+  exit 1
+}
+
+load_image
+mkdir -p "$VAR" "$VAR/logs"
+docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+
+ensure_image || {
+  log_error "镜像 $IMAGE 拉取失败。请确认设备能访问镜像仓库，或安装包含离线镜像的版本。"
+  exit 1
+}
+exit 0

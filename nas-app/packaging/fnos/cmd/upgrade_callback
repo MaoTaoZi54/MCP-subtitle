@@ -1,0 +1,18 @@
+#!/bin/bash
+# 升级后：重新准备镜像并启动。启动失败不阻断升级，错误写入用户可见日志。
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=common.sh
+. "$SCRIPT_DIR/common.sh"
+
+load_image
+docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+if ! ensure_image; then
+  log_error "升级后镜像 $IMAGE 不可用，应用暂未启动。请检查网络或重新安装。"
+  exit 0
+fi
+if [ -f "$ETC/token" ]; then
+  start_container || true
+fi
+exit 0

@@ -1,0 +1,33 @@
+[
+  {
+    "stepTitle": "卸载 NAS 媒体工具箱",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "媒体文件本身不受影响；此处只决定是否删除应用数据（config.yaml、白名单、数据源密钥与任务记录）。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_remove_data",
+        "label": "应用数据处理方式",
+        "initValue": "false",
+        "options": [
+          {
+            "label": "保留应用数据（推荐，重新安装后可继续使用）",
+            "value": "false"
+          },
+          {
+            "label": "删除应用数据（不可恢复）",
+            "value": "true"
+          }
+        ],
+        "rules": [
+          {
+            "required": true,
+            "message": "请选择数据清理方式"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,76 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Run tests
+        run: pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: nas-app:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test
+        run: |
+          docker run -d --name nas-app-ci -p 8669:8669 -p 127.0.0.1:8670:8670 \
+            -e NAS_APP_TOKEN=ci-token-123 \
+            -e NAS_APP_ALLOWED_PATHS=/data \
+            -e NAS_APP_MCP_ENABLED=1 \
+            -e NAS_APP_MCP_HOST=0.0.0.0 \
+            -e NAS_APP_MCP_PORT=8670 \
+            -v "$PWD/data:/data" nas-app:ci
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8669/healthz || true)
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          test "$code" = "200"
+          # 未带 Bearer 必须 401，证明 MCP 端口映射与鉴权同时生效
+          for i in $(seq 1 15); do
+            mcp_code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8670/mcp || true)
+            [ "$mcp_code" = "401" ] && break
+            sleep 2
+          done
+          test "$mcp_code" = "401"
+          docker logs nas-app-ci
+          docker rm -f nas-app-ci
+
+  fpk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build fpk
+        run: bash packaging/fnos/build-fpk.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nas-media-fpk
+          path: dist/*.fpk

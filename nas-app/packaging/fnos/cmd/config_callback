@@ -1,0 +1,24 @@
+#!/bin/bash
+# 配置变更后：可选更新访问令牌；若应用原本在运行，则重启以应用新的授权目录。
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=common.sh
+. "$SCRIPT_DIR/common.sh"
+
+new_token="${wizard_token:-}"
+if [ -n "$new_token" ]; then
+  if [ ${#new_token} -lt 8 ]; then
+    log_error "新访问令牌少于 8 个字符，未修改。"
+  else
+    umask 077
+    printf '%s' "$new_token" > "$ETC/token"
+    chmod 600 "$ETC/token" 2>/dev/null || true
+  fi
+fi
+
+if [ -f "$TMP/nas-media.was_running" ]; then
+  rm -f "$TMP/nas-media.was_running"
+  start_container || true
+fi
+exit 0

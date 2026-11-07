@@ -1,0 +1,15 @@
+#!/bin/bash
+# 配置变更前：记录应用当前是否在运行，便于变更后按原状态恢复。
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=common.sh
+. "$SCRIPT_DIR/common.sh"
+
+mkdir -p "$TMP"
+if container_running; then
+  : > "$TMP/nas-media.was_running"
+else
+  rm -f "$TMP/nas-media.was_running"
+fi
+exit 0

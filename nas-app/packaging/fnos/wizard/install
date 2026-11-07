@@ -1,0 +1,29 @@
+[
+  {
+    "stepTitle": "NAS 媒体工具箱",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "本应用通过 Docker 运行。安装完成后，请到「应用设置 → 授权目录」把媒体库目录授权给本应用；应用会把授权目录按相同路径挂载进容器（可读写）。未授权目录前应用无法启动。"
+      },
+      {
+        "type": "password",
+        "field": "wizard_token",
+        "label": "访问令牌",
+        "helpText": "用于登录 Web 界面，至少 8 个字符。请妥善保存，忘记后需重装或手动修改应用数据目录下的 token 文件。",
+        "rules": [
+          { "required": true, "message": "请设置访问令牌" },
+          { "min": 8, "message": "访问令牌至少 8 个字符" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "写操作（字幕下载、混流、目录整理、清理删除）默认关闭，可在 Web 界面「配置」页按需开启。"
+      },
+      {
+        "type": "tips",
+        "helpText": "安装后可在 Octop 添加自定义 MCP 直连本应用：传输选 streamable_http，地址 http://127.0.0.1:8670/mcp，Header 填 Authorization: Bearer <上一步设置的访问令牌>。该端口默认只对本机开放；若 8670 已被占用，应用会自动禁用 MCP，Web UI 不受影响。"
+      }
+    ]
+  }
+]

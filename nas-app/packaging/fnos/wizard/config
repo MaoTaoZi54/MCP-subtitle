@@ -1,0 +1,13 @@
+[
+  {
+    "stepTitle": "修改访问令牌",
+    "items": [
+      {
+        "type": "password",
+        "field": "wizard_token",
+        "label": "新访问令牌（留空保持不变）",
+        "helpText": "至少 8 个字符；保存后应用会自动重启。"
+      }
+    ]
+  }
+]

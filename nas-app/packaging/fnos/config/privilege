@@ -1,0 +1,7 @@
+{
+  "defaults": {
+    "run-as": "root"
+  },
+  "username": "nas-media",
+  "groupname": "nas-media"
+}

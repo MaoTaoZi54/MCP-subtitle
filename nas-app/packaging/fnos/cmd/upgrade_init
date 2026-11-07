@@ -1,0 +1,10 @@
+#!/bin/bash
+# 升级前：停止旧容器，保留 /var 数据（配置与任务记录）。
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=common.sh
+. "$SCRIPT_DIR/common.sh"
+
+stop_container
+exit 0

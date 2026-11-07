@@ -1,0 +1,39 @@
+#!/bin/bash
+# 安装文件写入前：校验向导参数并落盘访问令牌。
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=common.sh
+. "$SCRIPT_DIR/common.sh"
+
+mkdir -p "$ETC" "$VAR"
+
+token="${wizard_token:-}"
+if [ ${#token} -lt 8 ]; then
+  log_error "访问令牌至少 8 个字符，请返回上一步重新填写。"
+  exit 1
+fi
+
+umask 077
+printf '%s' "$token" > "$ETC/token"
+chmod 600 "$ETC/token" 2>/dev/null || true
+
+port="${TRIM_SERVICE_PORT:-8669}"
+case "$port" in
+  ''|*[!0-9]*) port=8669 ;;
+esac
+printf '%s' "$port" > "$ETC/port"
+
+# MCP 端口只用于宿主机 loopback 映射；端口占用时启动脚本会自动禁用 MCP
+mcp_port="${NAS_MCP_PORT:-8670}"
+case "$mcp_port" in
+  ''|*[!0-9]*) mcp_port=8670 ;;
+esac
+if [ "$mcp_port" -lt 1 ] || [ "$mcp_port" -gt 65535 ]; then
+  mcp_port=8670
+fi
+printf '%s' "$mcp_port" > "$ETC/mcp_port"
+
+mkdir -p "$VAR/logs"
+chmod 700 "$VAR" 2>/dev/null || true
+exit 0

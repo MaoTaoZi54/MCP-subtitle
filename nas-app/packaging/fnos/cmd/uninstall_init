@@ -1,0 +1,16 @@
+#!/bin/bash
+# 卸载前：停止容器；仅在用户明确勾选时删除应用数据。
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=common.sh
+. "$SCRIPT_DIR/common.sh"
+
+stop_container
+
+case "${wizard_remove_data:-false}" in
+  true|True|TRUE|1|yes|on)
+    rm -rf "$VAR"
+    ;;
+esac
+exit 0

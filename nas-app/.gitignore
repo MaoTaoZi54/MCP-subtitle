@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+config.yaml
+logs/
+dist/
+build/
+*.fpk
+*.tar
+*.tar.gz
+*.zip
+.pytest_cache/
+tests/.tmp/
+.env
+*.bak
+
+# IDE / 本地工具
+.idea/
+.trae/

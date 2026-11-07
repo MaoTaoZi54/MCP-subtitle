@@ -1,0 +1,31 @@
+services:
+  nas-app:
+    image: ghcr.io/maotaozi54/nas-app:0.19.0
+    build: .
+    container_name: nas-app
+    restart: unless-stopped
+    ports:
+      - "8669:8669"
+      # MCP 只发布到宿主机 loopback：Octop 与 nas-app 在同一台机器时用
+      # http://127.0.0.1:8670/mcp 直连，LAN 无法访问。需要 LAN 时显式改映射并自担防火墙/TLS。
+      - "127.0.0.1:${NAS_APP_MCP_HOST_PORT:-8670}:8670"
+    environment:
+      NAS_APP_TOKEN: "${NAS_APP_TOKEN:?请在 .env 中设置 NAS_APP_TOKEN，至少 8 位}"
+      # 首次启动生成 config.yaml 的白名单；多个路径用逗号或换行分隔
+      NAS_APP_ALLOWED_PATHS: "/media"
+      NAS_APP_EXCLUDE_PATHS: ""
+      # 容器内必须监听 0.0.0.0 才能被端口映射转发；NAS_APP_MCP_PORT 需与上面映射右侧一致
+      NAS_APP_MCP_ENABLED: "${NAS_APP_MCP_ENABLED:-1}"
+      NAS_APP_MCP_HOST: "0.0.0.0"
+      NAS_APP_MCP_PORT: "8670"
+      TZ: "Asia/Shanghai"
+    volumes:
+      - ./data:/data
+      # 媒体库示例：把宿主机路径挂到容器内任意位置，并加入 NAS_APP_ALLOWED_PATHS
+      - /vol1/1000/媒体:/media
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8669/healthz', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

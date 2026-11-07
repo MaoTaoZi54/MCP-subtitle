@@ -1,0 +1,36 @@
+#!/bin/bash
+# 运行控制：start / stop / status / restart
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=common.sh
+. "$SCRIPT_DIR/common.sh"
+
+case "${1:-}" in
+  start)
+    if container_running; then
+      exit 0
+    fi
+    start_container
+    exit $?
+    ;;
+  stop)
+    stop_container
+    exit 0
+    ;;
+  restart)
+    stop_container
+    start_container
+    exit $?
+    ;;
+  status)
+    if container_running; then
+      exit 0
+    fi
+    exit 3
+    ;;
+  *)
+    log_error "未知命令: ${1:-}"
+    exit 1
+    ;;
+esac

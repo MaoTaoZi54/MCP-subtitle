@@ -1,0 +1,13 @@
+{
+  ".url": {
+    "nas-media.main": {
+      "title": "NAS 媒体工具箱",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "http",
+      "port": "8669",
+      "url": "/",
+      "allUsers": true
+    }
+  }
+}
