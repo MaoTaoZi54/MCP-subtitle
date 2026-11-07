@@ -1,0 +1,22 @@
+# ===== 构建产物 / 打包件 =====
+dist/
+*.zip
+*.fpk
+
+# ===== 运行数据与真实配置（含密钥，绝不入库；模板是 config.example.yaml） =====
+logs/
+config.yaml
+*.bak
+.env
+
+# ===== Python =====
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# ===== IDE / 本地工具（不进版本库） =====
+.idea/
+.trae/
+.mimocode/
+.screenshots/
