@@ -205,13 +205,12 @@ def test_static_traversal_blocked(server):
         assert status == 404, path
 
 
-def test_ui_offers_pro_and_friendly_modes(server):
+def test_ui_uses_single_archive_theme(server):
     status, _, body = call(server, "GET", "/", headers=auth())
     html = body.decode("utf-8")
     assert status == 200
-    assert 'id="mode-switch"' in html
-    assert 'data-mode="pro"' in html
-    assert 'data-mode="friendly"' in html
+    assert 'id="mode-switch"' not in html
+    assert 'data-mode="pro"' not in html
     assert "/static/mode.js" in html
 
 
@@ -228,7 +227,7 @@ def test_login_page_applies_ui_mode_script(server):
     assert status == 200
     assert "/static/mode.js" in html
     assert "/static/login-mode.js" in html
-    assert 'id="login-mode-switch"' in html
+    assert 'id="login-mode-switch"' not in html
 
 
 def test_login_page_friendly_text(server):

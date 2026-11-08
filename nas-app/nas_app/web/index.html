@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NAS 媒体工具箱</title>
-<meta name="theme-color" content="#fbf4ee" id="theme-color">
+<meta name="theme-color" content="#f4f1ea" id="theme-color">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <script src="/static/mode.js"></script>
 <link rel="stylesheet" href="/static/style.css">
@@ -22,23 +22,18 @@
   <main>
     <header class="topbar">
       <div class="topbar-title">
-        <button type="button" class="nav-toggle" id="nav-toggle" aria-label="打开导航" aria-expanded="false" aria-controls="nav">☰</button>
+        <button type="button" class="nav-toggle" id="nav-toggle" aria-label="打开导航" aria-expanded="false" aria-controls="nav"><span class="ico" data-icon="menu"></span></button>
         <div>
           <h1 id="page-title">概览</h1>
           <p class="muted" id="page-subtitle"></p>
         </div>
       </div>
       <div class="top-actions">
-        <div class="mode-switch" id="mode-switch" role="group" aria-label="界面风格">
-          <span class="mode-label">界面</span>
-          <button type="button" data-mode="pro" aria-pressed="false">专业版</button>
-          <button type="button" data-mode="friendly" aria-pressed="true">友好版</button>
-        </div>
-        <button type="button" class="ghost small" id="tool-search-btn" title="搜索功能（Ctrl/⌘ + K）">搜索工具 ⌘K</button>
-        <button type="button" class="ghost small" id="theme-btn" title="切换配色：自动 / 浅色 / 深色">配色 · 自动</button>
-        <button type="button" class="ghost small jobs-ind" id="jobs-ind" hidden>0 个任务进行中</button>
+        <button type="button" class="ghost small" id="tool-search-btn" title="搜索功能（Ctrl/⌘ + K）"><span class="ico" data-icon="search"></span><span class="btn-label">搜索工具</span><kbd>⌘K</kbd></button>
+        <button type="button" class="ghost small" id="theme-btn" title="切换配色：自动 / 浅色 / 深色"><span class="ico" data-icon="theme"></span><span class="btn-label" id="theme-label">配色 · 自动</span></button>
+        <button type="button" class="ghost small jobs-ind" id="jobs-ind" hidden><span class="ico" data-icon="jobs"></span><span class="btn-label" id="jobs-label">0 个任务进行中</span></button>
         <span id="health" class="badge"></span>
-        <button type="button" class="ghost" id="refresh-btn">刷新</button>
+        <button type="button" class="ghost" id="refresh-btn"><span class="ico" data-icon="refresh"></span><span class="btn-label">刷新</span></button>
       </div>
     </header>
     <section id="view" class="view"></section>

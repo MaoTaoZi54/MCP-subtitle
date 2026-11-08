@@ -16,14 +16,14 @@ const S = {
 };
 
 const NAV = [
-  { id: 'overview', label: '概览', icon: '◈' },
-  { id: 'browse', label: '媒体浏览', icon: '▤', tools: ['nas_list_directory', 'nas_find_files', 'nas_disk_usage'] },
-  { id: 'scan', label: '扫描体检', icon: '◉', tools: ['nas_scan_media', 'media_quality_analyze', 'media_library_audit', 'duplicate_media_detect', 'media_missing_episodes', 'media_integrity_check', 'nas_check_subtitle', 'nas_classify_region'] },
-  { id: 'subtitle', label: '字幕', icon: '文', tools: ['media_fill_subtitles', 'subhd_search', 'subhd_download', 'media_mux_subtitles'] },
-  { id: 'resource', label: '资源搜索', icon: '⌕', tools: ['media_search', 'jackett_search', 'seedhub_search', 'seedhub_pans', 'seedhub_magnets', 'dysbk_search', 'dysbk_links', 'resolve_media'] },
-  { id: 'organize', label: '整理清理', icon: '⇄', tools: ['organize_media', 'find_media', 'media_cleanup', 'media_rollback'] },
-  { id: 'config', label: '配置', icon: '⚙' },
-  { id: 'workbench', label: '工具台', icon: '⌘' },
+  { id: 'overview', label: '概览', icon: 'overview' },
+  { id: 'browse', label: '媒体浏览', icon: 'browse', tools: ['nas_list_directory', 'nas_find_files', 'nas_disk_usage'] },
+  { id: 'scan', label: '扫描体检', icon: 'scan', tools: ['nas_scan_media', 'media_quality_analyze', 'media_library_audit', 'duplicate_media_detect', 'media_missing_episodes', 'media_integrity_check', 'nas_check_subtitle', 'nas_classify_region'] },
+  { id: 'subtitle', label: '字幕', icon: 'subtitle', tools: ['media_fill_subtitles', 'subhd_search', 'subhd_download', 'media_mux_subtitles'] },
+  { id: 'resource', label: '资源搜索', icon: 'resource', tools: ['media_search', 'jackett_search', 'seedhub_search', 'seedhub_pans', 'seedhub_magnets', 'dysbk_search', 'dysbk_links', 'resolve_media'] },
+  { id: 'organize', label: '整理清理', icon: 'organize', tools: ['organize_media', 'find_media', 'media_cleanup', 'media_rollback'] },
+  { id: 'config', label: '配置', icon: 'config' },
+  { id: 'workbench', label: '工具台', icon: 'workbench' },
 ];
 
 // 工具台按用途分组：覆盖全部 28 个工具，分组可折叠，展开状态记在本地
@@ -387,8 +387,9 @@ function openFilePicker(opts = {}) {
     : (mode === 'file' ? t('选择文件', '选择文件') : t('选择路径', '选择路径'));
 
   const head = el('div', 'modal-head');
-  head.appendChild(el('h2', null, '📁 ' + titleText));
-  const closeBtn = el('button', 'modal-close', '×');
+  head.appendChild(el('h2')).appendChild(iconLabel('folder', titleText));
+  const closeBtn = el('button', 'modal-close');
+  closeBtn.appendChild(icon('close'));
   closeBtn.type = 'button';
   closeBtn.title = t('关闭 (Esc)', '关闭');
   closeBtn.setAttribute('aria-label', t('关闭', '关闭'));
@@ -507,7 +508,7 @@ function openFilePicker(opts = {}) {
     const root = rootOf(curDir) || curDir;
     if (curDir !== root) {
       const upItem = el('div', 'file-picker-item');
-      upItem.appendChild(el('div', 'item-main', '📁 .. (上一级)'));
+      upItem.appendChild(el('div', 'item-main')).appendChild(iconLabel('parent', '.. (上一级)'));
       upItem.onclick = () => {
         const parent = curDir.replace(/\/[^/]+$/, '') || root;
         loadDir(parent);
@@ -535,8 +536,8 @@ function openFilePicker(opts = {}) {
       const item = el('div', 'file-picker-item' + (entry.path === selectedItemPath ? ' selected' : ''));
 
       const main = el('div', 'item-main');
-      const icon = isDir ? '📁' : (isVid ? '🎬' : '📄');
-      main.appendChild(document.createTextNode(icon + ' ' + entry.name));
+      const iconName = isDir ? 'folder' : (isVid ? 'film' : 'file');
+      main.appendChild(iconLabel(iconName, entry.name));
       item.appendChild(main);
 
       const meta = el('div', 'item-meta');
@@ -589,12 +590,13 @@ function openMediaActionModal(entry) {
 
   const head = el('div', 'modal-head');
   const titleWrap = el('div');
-  titleWrap.appendChild(el('h2', null, '🎬 ' + (entry.name || entry.path.split('/').pop())));
+  titleWrap.appendChild(el('h2')).appendChild(iconLabel('film', entry.name || entry.path.split('/').pop()));
   const pathRow = el('div', 'media-quick-path', entry.path);
   titleWrap.appendChild(pathRow);
   head.appendChild(titleWrap);
 
-  const closeBtn = el('button', 'modal-close', '×');
+  const closeBtn = el('button', 'modal-close');
+  closeBtn.appendChild(icon('close'));
   closeBtn.type = 'button';
   closeBtn.setAttribute('aria-label', t('关闭', '关闭'));
   closeBtn.onclick = () => close();
@@ -621,9 +623,9 @@ function openMediaActionModal(entry) {
   // Tab 按钮
   const nav = el('div', 'media-quick-nav');
   const tabs = [
-    { id: 'sub', label: '🔤 ' + t('字幕管理与混流', '字幕') },
-    { id: 'organize', label: '📁 ' + t('规范命名与整理', '整理') },
-    { id: 'quality', label: '🔍 ' + t('画质与体检', '体检') },
+    { id: 'sub', icon: 'subtitle', label: t('字幕管理与混流', '字幕') },
+    { id: 'organize', icon: 'folder', label: t('规范命名与整理', '整理') },
+    { id: 'quality', icon: 'search', label: t('画质与体检', '体检') },
   ];
   let activeTab = 'sub';
   const stage = el('div', 'media-quick-body');
@@ -640,7 +642,8 @@ function openMediaActionModal(entry) {
   };
 
   tabs.forEach((tinfo) => {
-    const btn = el('button', 'media-quick-tab-btn' + (tinfo.id === activeTab ? ' active' : ''), tinfo.label);
+    const btn = el('button', 'media-quick-tab-btn' + (tinfo.id === activeTab ? ' active' : ''));
+    btn.appendChild(iconLabel(tinfo.icon, tinfo.label));
     btn.type = 'button';
     btn.dataset.tab = tinfo.id;
     btn.onclick = () => switchTab(tinfo.id);
@@ -674,20 +677,24 @@ function openMediaActionModal(entry) {
           || (res.has_chinese_subtitle ? 'known_zh' : (res.has_any_subtitle ? 'unknown' : 'none'));
         const unknownLang = t('语言未知', '语言未知');
         let tone = 'warn';
+        let statusIcon = 'alert';
         let text;
         if (status === 'known_zh') {
           tone = 'ok';
-          text = t('✅ 已有中文字幕', '✅ 有中文字幕');
+          statusIcon = 'check';
+          text = t('已有中文字幕', '有中文字幕');
         } else if (status === 'none') {
-          text = t('⚠️ 缺少字幕', '⚠️ 缺少字幕');
+          text = t('缺少字幕', '缺少字幕');
         } else if (res.has_traditional_subtitle) {
-          text = t('⚠️ 未检测到简体中文字幕，仅检测到繁体', '⚠️ 未检测到简体中文，仅检测到繁体');
+          text = t('未检测到简体中文字幕，仅检测到繁体', '未检测到简体中文，仅检测到繁体');
         } else if (status === 'unknown') {
-          text = t('⚠️ 检测到外挂字幕，语言未知', '⚠️ 检测到外挂字幕，语言未知');
+          text = t('检测到外挂字幕，语言未知', '检测到外挂字幕，语言未知');
         } else {
-          text = t('⚠️ 检测到字幕，但非简体中文', '⚠️ 检测到字幕，但不是简体中文');
+          text = t('检测到字幕，但非简体中文', '检测到字幕，但不是简体中文');
         }
-        const badge = el('span', 'badge ' + tone, text);
+        const badge = el('span', 'badge ' + tone);
+        badge.appendChild(icon(statusIcon));
+        badge.appendChild(document.createTextNode(text));
         sBody.appendChild(badge);
 
         if (embedded.length) {
@@ -724,11 +731,13 @@ function openMediaActionModal(entry) {
     searchInput.placeholder = t('输入影片/剧集名称关键词…', '输入关键词搜字幕…');
     searchRow.appendChild(searchInput);
 
-    const searchBtn = el('button', 'primary', t('🔍 搜索字幕', '搜索'));
+    const searchBtn = el('button', 'primary');
+    btnContent(searchBtn, 'search', t('搜索字幕', '搜索'));
     searchBtn.type = 'button';
     searchRow.appendChild(searchBtn);
 
-    const autoFillBtn = el('button', 'ghost', t('🤖 自动补全 (media_fill_subtitles)', '自动补字幕'));
+    const autoFillBtn = el('button', 'ghost');
+    btnContent(autoFillBtn, 'sparkle', t('自动补全 (media_fill_subtitles)', '自动补字幕'));
     autoFillBtn.type = 'button';
     autoFillBtn.title = t('调用后台多数据源自动寻找字幕', '让系统自动去各站点找字幕');
     searchRow.appendChild(autoFillBtn);
@@ -860,7 +869,8 @@ function openMediaActionModal(entry) {
           rActions.style.display = 'flex';
           rActions.style.gap = '6px';
 
-          const muxBtn = el('button', 'primary small', '⚡ ' + t('下载并混流进视频', '一键合进视频'));
+          const muxBtn = el('button', 'primary small');
+          btnContent(muxBtn, 'bolt', t('下载并混流进视频', '一键合进视频'));
           muxBtn.type = 'button';
           muxBtn.onclick = async () => {
             if (writeGateOff) {
@@ -868,7 +878,7 @@ function openMediaActionModal(entry) {
               return;
             }
             muxBtn.disabled = true;
-            muxBtn.textContent = t('正在处理…', '处理中…');
+            setBtnText(muxBtn, t('正在处理…', '处理中…'));
             try {
               const sid = String(item.sid || item.id || '');
               const dlRes = await api('/api/tools/subhd_download', { method: 'POST', body: { args: { video_path: entry.path, sid } } });
@@ -908,13 +918,13 @@ function openMediaActionModal(entry) {
                 toast(t('混流未执行：' + reason, '没有合并：' + reason), true);
                 return;
               }
-              toast(t('🎉 字幕已成功混流进原视频！', '🎉 字幕已合并进视频！'));
+              toast(t('字幕已成功混流进原视频！', '字幕已合并进视频！'));
               checkSubs();
             } catch (err) {
               toast(t('混流失败：' + (err.message || '未知错误'), '合并失败'), true);
             } finally {
               muxBtn.disabled = false;
-              muxBtn.textContent = '⚡ ' + t('下载并混流进视频', '一键合进视频');
+              setBtnText(muxBtn, t('下载并混流进视频', '一键合进视频'));
             }
           };
 
@@ -997,7 +1007,8 @@ function openMediaActionModal(entry) {
 
         const confirmRow = el('div', 'form-actions');
         confirmRow.style.marginTop = '14px';
-        const applyBtn = el('button', 'danger', t('⚠️ 确认无误，执行真实整理', '确认整理并改名'));
+        const applyBtn = el('button', 'danger');
+        btnContent(applyBtn, 'alert', t('确认无误，执行真实整理', '确认整理并改名'));
         applyBtn.type = 'button';
         applyBtn.onclick = async () => {
           if (!confirm(t('即将对磁盘上的文件执行重命名与整理，确认执行？', '确定要真正改动文件吗？'))) return;
@@ -1249,6 +1260,92 @@ function el(tag, cls, text) {
   return node;
 }
 
+// ---------------------------------------------------------------- 图标系统
+// 统一内联单线图标：24 网格、18×18 视觉尺寸、1.5 描边，颜色跟随 currentColor。
+// 不引图标字体/外部资源，暗色主题自动成立。
+const ICON_PATHS = {
+  overview: 'M4 11l8-7 8 7 M6 10v10h12V10',
+  browse: 'M3.5 6.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8A1.5 1.5 0 0 1 20.5 8.5v9A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z',
+  scan: 'M3 12h4l2.5-6 4.5 12 2.5-6H21',
+  subtitle: 'M6 3.5h8l4 4v13H6z M14 3.5v4h4 M9 12h6 M9 15.5h4',
+  resource: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M15.5 8.5l-2 5-5 2 2-5z',
+  organize: 'M4 8.5h13 M13.5 5l3.5 3.5-3.5 3.5 M20 15.5H7 M10.5 12L7 15.5l3.5 3.5',
+  config: 'M4 7h7 M15 7h5 M4 17h5 M13 17h7 M13 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M9 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
+  workbench: 'M3.5 5.5h17v13h-17z M7.5 9.5l2.5 2.5-2.5 2.5 M12.5 14.5h4',
+  search: 'M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z M15.5 15.5L20.5 20.5',
+  theme: 'M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z',
+  refresh: 'M20 12a8 8 0 1 1-2.4-5.7 M20 3.5v4h-4',
+  health: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M8 12.2l2.7 2.7L16.5 9',
+  jobs: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 7.5V12l3 2',
+  menu: 'M4 7h16 M4 12h16 M4 17h16',
+  close: 'M6.5 6.5l11 11 M17.5 6.5l-11 11',
+  chevron: 'M9.5 7l5 5-5 5',
+  folder: 'M3.5 6.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8A1.5 1.5 0 0 1 20.5 8.5v9A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z',
+  parent: 'M9 14l-5-5 5-5 M4 9h7.5a5 5 0 0 1 5 5v6',
+  film: 'M3.5 5.5h17v13h-17z M7.5 5.5v13 M16.5 5.5v13',
+  file: 'M6 3.5h8l4 4v13H6z M14 3.5v4h4',
+  bolt: 'M13 3L5.5 13.5H11l-1 7.5 8-11h-5.5z',
+  rollback: 'M4 12a8 8 0 1 0 2.4-5.7 M4 3.5v4h4 M12 8v4.5l3 1.5',
+  alert: 'M12 4.5l8 14H4z M12 10v4 M12 16.8v.01',
+  check: 'M5 12.5l4.5 4.5L19 7.5',
+  archive: 'M3.5 5.5h17v4h-17z M5 9.5h14v9H5z M9.5 12.5h5',
+  sparkle: 'M12 4l2 6 6 2-6 2-2 6-2-6-6-2 6-2z',
+  dot: 'M12 12h.01',
+};
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function icon(name, cls) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '18');
+  svg.setAttribute('height', '18');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.5');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('class', 'icon' + (cls ? ' ' + cls : ''));
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', ICON_PATHS[name] || ICON_PATHS.dot);
+  svg.appendChild(path);
+  return svg;
+}
+
+// 图标 + 文案：统一间距，避免每处手写空格
+function iconLabel(name, text, cls) {
+  const node = el('span', 'icon-label' + (cls ? ' ' + cls : ''));
+  node.appendChild(icon(name));
+  if (text !== undefined && text !== null) node.appendChild(document.createTextNode(String(text)));
+  return node;
+}
+
+// 按钮「图标 + 可更新文案」：只改 .btn-label，图标不会被 textContent 抹掉
+function btnContent(btn, name, text) {
+  const wrap = el('span', 'icon-label');
+  wrap.appendChild(icon(name));
+  const lab = el('span', 'btn-label', text);
+  wrap.appendChild(lab);
+  btn.appendChild(wrap);
+  return lab;
+}
+
+function setBtnText(btn, text) {
+  const lab = btn && btn.querySelector('.btn-label');
+  if (lab) lab.textContent = String(text);
+  else if (btn) btn.textContent = String(text);
+}
+
+// 把 index.html 里的 [data-icon] 占位换成 SVG
+function mountIcons(root) {
+  (root || document).querySelectorAll('[data-icon]').forEach((slot) => {
+    if (slot.querySelector('.icon')) return;
+    slot.appendChild(icon(slot.dataset.icon));
+  });
+}
+
 let __uid = 0;
 function nextId(prefix) {
   __uid += 1;
@@ -1359,6 +1456,38 @@ function fmtCell(value, key) {
   return text.length > 160 ? text.slice(0, 160) + '…' : text;
 }
 
+// 数值列：数字右对齐，单位单独降一档展示（只做展示分层，不改原值）
+const NUMERIC_COLS = new Set([
+  '大小', '总量', '可用', '剩余', '使用率', '耗时', '时长', '码率', '帧率', '评分',
+  '做种', '置信度', '数量', '文件数', '集数', '季数', '结果数', '最高分', '返回',
+  'size', 'size_bytes', 'total_bytes', 'used_bytes', 'free_bytes', 'percent_used',
+  'duration_ms', 'duration_seconds', 'bit_rate', 'frame_rate', 'score', 'seeders',
+  'file_count', 'episode_count', 'season_count', 'max_list_entries', 'max_search_results',
+  'max_scan_files', 'max_list_depth', 'max_errors_reported',
+]);
+// 只拆常见单位，日期、编号等含空格/冒号的文本不动
+const CELL_UNIT = /^([\d.,]+)\s*(B|KB|MB|GB|TB|PB|%|ms|s)$/;
+
+function cellContent(text, numeric) {
+  const cell = el('span', 'cell');
+  const raw = String(text === null || text === undefined ? '' : text);
+  if (numeric) {
+    const m = raw.match(CELL_UNIT);
+    if (m) {
+      cell.appendChild(el('span', 'num-val', m[1]));
+      cell.appendChild(el('span', 'num-unit', m[2]));
+      return cell;
+    }
+  }
+  cell.textContent = raw;
+  return cell;
+}
+
+function isNumericCol(col, value) {
+  return typeof value === 'number' || NUMERIC_COLS.has(col)
+    || /_(bytes|human)$/.test(col);
+}
+
 function label(key) {
   const leaf = String(key).split('.').pop();
   if (!IS_PRO() && FRIENDLY.field[leaf]) return FRIENDLY.field[leaf];
@@ -1394,7 +1523,15 @@ async function api(path, options = {}) {
 
 function toast(message, isError) {
   const node = document.getElementById('toast');
-  node.textContent = message;
+  if (!node) return;
+  node.textContent = '';
+  node.appendChild(el('span', 'toast-msg', message));
+  const close = el('button', 'toast-close');
+  close.type = 'button';
+  close.setAttribute('aria-label', t('关闭提示', '关闭提示'));
+  close.appendChild(icon('close'));
+  close.onclick = () => { clearTimeout(toast._timer); node.hidden = true; };
+  node.appendChild(close);
   node.className = 'toast' + (isError ? ' err' : '');
   node.hidden = false;
   clearTimeout(toast._timer);
@@ -1402,7 +1539,7 @@ function toast(message, isError) {
 }
 
 // ---------------------------------------------------------------- 界面风格与配色
-const UI_MODE_KEY = 'nas-ui-mode';
+
 const THEME_KEY = 'nas-color-theme';
 const THEME_LABELS = { auto: '自动', light: '浅色', dark: '深色' };
 const themeMq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
@@ -1421,12 +1558,12 @@ function resolveTheme(pref) {
 function applyTheme() {
   const pref = themePref();
   document.documentElement.dataset.theme = resolveTheme(pref);
-  const btn = document.getElementById('theme-btn');
-  if (btn) btn.textContent = t('配色 · ' + THEME_LABELS[pref], '配色 · ' + THEME_LABELS[pref]);
+  const themeLabel = document.getElementById('theme-label');
+  if (themeLabel) themeLabel.textContent = t('配色 · ' + THEME_LABELS[pref], '配色 · ' + THEME_LABELS[pref]);
   const meta = document.getElementById('theme-color');
   if (meta) {
     const dark = resolveTheme(pref) === 'dark';
-    const light = document.documentElement.dataset.uiMode === 'pro' ? '#eef2f7' : '#fbf4ee';
+    const light = '#f4f1ea';
     meta.setAttribute('content', dark ? '#0e1219' : light);
   }
 }
@@ -1439,23 +1576,6 @@ function cycleTheme() {
   toast(t(`配色已切换为「${THEME_LABELS[next]}」`, `配色：${THEME_LABELS[next]}`));
 }
 
-function setUiMode(mode, persist) {
-  const next = mode === 'pro' ? 'pro' : 'friendly';
-  document.documentElement.dataset.uiMode = next;
-  if (persist) {
-    try { localStorage.setItem(UI_MODE_KEY, next); } catch (_) { /* 隐私模式忽略 */ }
-  }
-  document.querySelectorAll('#mode-switch button').forEach((btn) => {
-    btn.setAttribute('aria-pressed', String(btn.dataset.mode === next));
-  });
-  applyTheme();
-  // 切换即时生效：重绘外壳文案与当前视图（已知取舍：会清空未提交的表单内容）。
-  if (S.meta) {
-    applyShellCopy();
-    route();
-  }
-}
-
 function applyShellCopy() {
   if (!S.meta) return;
   const badge = document.getElementById('auth-badge');
@@ -1463,17 +1583,6 @@ function applyShellCopy() {
     ? t('令牌保护已开启', '已设置访问密码')
     : t('未设置令牌', '未设置访问密码');
   badge.className = 'badge ' + (S.meta.auth_required ? 'ok' : 'warn');
-}
-
-function initUiMode() {
-  const initial = document.documentElement.dataset.uiMode === 'pro' ? 'pro' : 'friendly';
-  setUiMode(initial, false);
-  document.querySelectorAll('#mode-switch button').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      setUiMode(btn.dataset.mode, true);
-      toast(btn.dataset.mode === 'pro' ? '已切换到专业版：信息更紧凑' : '已切换到友好版：界面更舒展');
-    });
-  });
 }
 
 // 错误码 → 主行动按钮：能补配置就去配置，能重试就重试，避免只会说「失败了」
@@ -1513,7 +1622,7 @@ function errorBox(error, opts = {}) {
   return emptyState({
     title: title,
     hint: hint,
-    icon: '⚠',
+    icon: 'alert',
     tone: 'err',
     action: action,
     details: { code: code, message: message, ...extras },
@@ -1545,7 +1654,7 @@ function buildNav() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.dataset.page = item.id;
-    btn.appendChild(el('span', 'ico', item.icon));
+    btn.appendChild(el('span', 'ico')).appendChild(icon(item.icon));
     btn.appendChild(el('span', null, item.label));
     btn.addEventListener('click', () => { location.hash = '#/' + item.id; });
     nav.appendChild(btn);
@@ -1603,7 +1712,9 @@ function setupNavDrawer() {
 function emptyState(title, hint, opts = {}) {
   if (title && typeof title === 'object') { opts = title; title = opts.title; hint = opts.hint; }
   const box = el('div', 'empty' + (opts.tone ? ' empty-' + opts.tone : ''));
-  box.appendChild(el('div', 'empty-ico', opts.icon || '◌'));
+  const ico = el('div', 'empty-ico');
+  ico.appendChild(icon(opts.icon || 'archive'));
+  box.appendChild(ico);
   box.appendChild(el('strong', null, title || ''));
   if (hint) box.appendChild(el('p', 'muted', hint));
   const action = opts.action;
@@ -1729,10 +1840,11 @@ function toolTabs(item) {
     tip.style.justifyContent = 'space-between';
     tip.style.gap = '12px';
     const msg = el('div');
-    msg.appendChild(el('strong', null, '⏪ ' + t('安全冗余保障：支持随时回滚', '支持随时一键回滚整理')));
+    msg.appendChild(el('strong')).appendChild(iconLabel('rollback', t('安全冗余保障：支持随时回滚', '支持随时一键回滚整理')));
     msg.appendChild(el('p', 'muted', t('如果自动化整理或重命名的结果不符合预期，可使用回滚工具将文件恢复原状。', '要是整理改名错了，点右边按钮可以一键恢复成原本的样子。')));
     tip.appendChild(msg);
-    const rbBtn = el('button', 'ghost small', '⏪ ' + t('回滚上次整理 (media_rollback)', '一键恢复'));
+    const rbBtn = el('button', 'ghost small');
+    btnContent(rbBtn, 'rollback', t('回滚上次整理 (media_rollback)', '一键恢复'));
     rbBtn.type = 'button';
     rbBtn.onclick = () => sendToTool('media_rollback', {});
     tip.appendChild(rbBtn);
@@ -1968,7 +2080,8 @@ function buildField(param, id, tool) {
     if (param.default) input.value = String(param.default);
     wrap.appendChild(input);
 
-    const pickBtn = el('button', 'ghost picker-btn', '📁 ' + t('选择文件', '浏览'));
+    const pickBtn = el('button', 'ghost picker-btn');
+    btnContent(pickBtn, 'folder', t('选择文件', '浏览'));
     pickBtn.type = 'button';
     pickBtn.title = t('在 NAS 文件目录树中选择视频文件', '在 NAS 里选择视频文件');
     pickBtn.onclick = () => {
@@ -2025,7 +2138,8 @@ function buildField(param, id, tool) {
       if (def !== '' && def !== undefined) input.value = String(def);
       wrap.appendChild(input);
 
-      const pickBtn = el('button', 'ghost picker-btn', '📁 ' + t('选择目录', '浏览'));
+      const pickBtn = el('button', 'ghost picker-btn');
+      btnContent(pickBtn, 'folder', t('选择目录', '浏览'));
       pickBtn.type = 'button';
       pickBtn.title = t('在 NAS 目录树中选择任意文件夹', '在 NAS 里选择文件夹');
       pickBtn.onclick = () => {
@@ -2641,13 +2755,13 @@ function relevanceText(row, query) {
   const conf = String(row.confidence || '');
   const reason = relevanceEvidence(row.warning);
   if (row.mismatch || conf === 'mismatch') {
-    return '⚠ 不匹配' + (reason ? '：' + reason : '');
+    return '不匹配' + (reason ? '：' + reason : '');
   }
   if (conf === 'high') {
     return row.verified ? '高 · 已验证' : '高（仅标题匹配）';
   }
   if (conf === 'suspicious') {
-    return '⚠ 可疑' + (reason ? '：' + reason : '，标题匹配但元数据异常');
+    return '可疑' + (reason ? '：' + reason : '，标题匹配但元数据异常');
   }
   if (conf === 'partial') {
     return '部分命中' + (reason ? '：' + reason : '');
@@ -3695,7 +3809,8 @@ function renderTable(key, arr, opts = {}) {
       const pair = pairs[i];
       const row = pair.row;
       const tr = document.createElement('tr');
-      if (String(row['相关性'] || '').indexOf('⚠') === 0) tr.classList.add('warn-row');
+      if (selectable) tr.classList.add('has-select');
+      if (/^(不匹配|可疑)/.test(String(row['相关性'] || ''))) tr.classList.add('warn-row');
       const linked = !!(opts.rowLink && opts.rowLink(pair.src, row));
       if (linked) tr.classList.add('row-link');
       const itemPath = keyOf(pair);
@@ -3723,7 +3838,9 @@ function renderTable(key, arr, opts = {}) {
       }
       for (const col of cols) {
         const value = row[col];
-        const td = el('td', typeof value === 'number' ? 'num' : 'wrap', fmtCell(value, col));
+        const numeric = isNumericCol(col, value);
+        const td = el('td', numeric ? 'num' : 'wrap', '');
+        td.appendChild(cellContent(fmtCell(value, col), numeric));
         td.dataset.label = label(col); // 手机端卡片化时作为字段名
         if (opts.fit && (col === '名称' || col === '标题')) {
           td.classList.add('sticky-col');
@@ -3739,8 +3856,8 @@ function renderTable(key, arr, opts = {}) {
 
       if (isVideo) {
         const quickBtn = el('button', 'quick-action-pill');
-        quickBtn.appendChild(el('span', null, '⚡'));
-        quickBtn.appendChild(el('span', 'qa-label', ' ' + t('快捷操作', '操作')));
+        quickBtn.appendChild(icon('bolt'));
+        quickBtn.appendChild(el('span', 'qa-label', t('快捷操作', '操作')));
         quickBtn.type = 'button';
         quickBtn.title = t('打开单片快捷操作面板（搜字幕/混流/整理/体检）', '打开快捷面板');
         quickBtn.onclick = (ev) => {
@@ -3749,7 +3866,8 @@ function renderTable(key, arr, opts = {}) {
         };
         actionTd.appendChild(quickBtn);
       } else if (isDir && pair.src.path) {
-        const orgBtn = el('button', 'ghost small', '⇄ ' + t('整理', '整理'));
+        const orgBtn = el('button', 'ghost small');
+        btnContent(orgBtn, 'organize', t('整理', '整理'));
         orgBtn.type = 'button';
         orgBtn.title = t('整理此文件夹下的影视', '规范命名并整理');
         orgBtn.onclick = (ev) => {
@@ -3975,12 +4093,133 @@ async function runFlow(flow, base, log) {
 }
 
 // ---------------------------------------------------------------- 概览
+// 图表只用现有接口字段：/api/overview（磁盘卷）、/api/jobs（任务状态）、/api/meta（工具分类）。
+// 纯 CSS 条形，不引入任何外部库；颜色全部走 token。
+function chartBox(titleText, noteText) {
+  const box = el('div', 'chart');
+  const head = el('div', 'chart-head');
+  head.appendChild(el('span', 'chart-title', titleText));
+  if (noteText) head.appendChild(el('span', 'chart-note', noteText));
+  box.appendChild(head);
+  return box;
+}
+
+function chartEmpty(box, text) {
+  box.appendChild(el('div', 'chart-empty', text));
+  return box;
+}
+
+function chartBarRow(labelText, value, max, valueText, tone) {
+  const row = el('div', 'chart-row');
+  row.appendChild(el('span', 'chart-label', labelText));
+  const track = el('div', 'chart-track');
+  const fill = el('i', 'chart-fill' + (tone ? ' ' + tone : ''));
+  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
+  fill.style.width = pct.toFixed(2) + '%';
+  track.appendChild(fill);
+  row.appendChild(track);
+  row.appendChild(el('span', 'chart-value', valueText));
+  row.title = labelText + '：' + valueText;
+  return row;
+}
+
+// 存储：每个卷一条「已用 / 可用」堆叠条，百分比与绝对数值都能直接读
+function storageUsageChart(filesystems) {
+  const box = chartBox(t('存储占用', '存储占用'), t('按卷统计', '按磁盘统计'));
+  if (!filesystems.length) return chartEmpty(box, t('暂时读不到磁盘容量。', '暂时读不到磁盘容量。'));
+  const rows = el('div', 'chart-rows');
+  const legend = el('div', 'chart-legend');
+  for (const fs of filesystems) {
+    const total = Number(fs.total_bytes) || 0;
+    const used = Number(fs.used_bytes) || 0;
+    const free = Number(fs.free_bytes) || 0;
+    const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+    const row = el('div', 'chart-row');
+    row.appendChild(el('span', 'chart-label', fs.mount_point || fs.device || t('磁盘', '磁盘')));
+    const stack = el('div', 'chart-stack');
+    const u = el('i', 'used');
+    u.style.width = pct.toFixed(2) + '%';
+    const f = el('i', 'free');
+    f.style.width = (100 - pct).toFixed(2) + '%';
+    stack.append(u, f);
+    row.appendChild(stack);
+    row.appendChild(el('span', 'chart-value', total > 0 ? pct.toFixed(1) + '%' : '—'));
+    row.title = total > 0
+      ? `${fs.used_human || fmtSize(used)} 已用 / ${fs.free_human || fmtSize(free)} 可用`
+      : t('这块磁盘没有返回容量数据', '这块磁盘没有返回容量数据');
+    rows.appendChild(row);
+    const item = el('span');
+    item.appendChild(el('i', 'k'));
+    const usedText = fs.used_human || fmtSize(used);
+    const freeText = fs.free_human || fmtSize(free);
+    item.appendChild(document.createTextNode(
+      t(`已用 ${usedText} · 可用 ${freeText}`, `已用 ${usedText}，还能放 ${freeText}`)));
+    legend.appendChild(item);
+  }
+  box.appendChild(rows);
+  if (legend.childNodes.length) box.appendChild(legend);
+  return box;
+}
+
+// 任务：按状态计数，值直接标在条子右边
+function jobStatusChart(jobList) {
+  const box = chartBox(t('任务结果', '任务结果'), t(`最近 ${jobList.length} 条`, `最近 ${jobList.length} 条`));
+  if (!jobList.length) {
+    return chartEmpty(box, t('还没有后台任务记录。扫描、整理或批量补字幕之后，这里会出现统计。',
+      '这里还空空的。扫描或整理之后，这里会出现统计。'));
+  }
+  const defs = [
+    ['succeeded', t('完成', '完成'), 'ok'],
+    ['failed', t('失败', '失败'), 'err'],
+    ['interrupted', t('已中断', '已中断'), 'err'],
+    ['running', t('进行中', '进行中'), 'warn'],
+    ['queued', t('排队中', '排队中'), 'warn'],
+    ['canceled', t('已取消', '已取消'), 'muted'],
+  ];
+  const counts = {};
+  for (const job of jobList) counts[job.status] = (counts[job.status] || 0) + 1;
+  const max = Math.max(...defs.map(([status]) => counts[status] || 0), 1);
+  const rows = el('div', 'chart-rows');
+  for (const [status, labelText, tone] of defs) {
+    const n = counts[status] || 0;
+    if (n) rows.appendChild(chartBarRow(labelText, n, max, String(n) + t(' 个', ' 个'), tone));
+  }
+  // 出现了上面没列出的状态（后端新增）时，兜底成一类，不让统计凭空少掉
+  const known = new Set(defs.map(([status]) => status));
+  const extra = Object.keys(counts).filter((status) => !known.has(status));
+  for (const status of extra) {
+    rows.appendChild(chartBarRow(status, counts[status], max, String(counts[status]) + t(' 个', ' 个')));
+  }
+  box.appendChild(rows);
+  return box;
+}
+
+// 工具构成：按 /api/meta 里的 category 计数
+function toolCategoryChart() {
+  const tools = (S.meta && S.meta.tools) || [];
+  const box = chartBox(t('工具构成', '工具构成'), t(`${tools.length} 个工具`, `${tools.length} 个工具`));
+  if (!tools.length) return chartEmpty(box, t('暂时读不到工具清单。', '暂时读不到工具清单。'));
+  const counts = {};
+  for (const tool of tools) {
+    const name = tool.category || t('其他', '其他');
+    counts[name] = (counts[name] || 0) + 1;
+  }
+  const items = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  const max = Math.max(...items.map((name) => counts[name]), 1);
+  const rows = el('div', 'chart-rows');
+  for (const name of items) {
+    rows.appendChild(chartBarRow(name, counts[name], max, String(counts[name]) + t(' 个', ' 个')));
+  }
+  box.appendChild(rows);
+  return box;
+}
+
 async function pageOverview(view) {
   setHeader('概览', t('能力总览、存储空间与写权限状态。', '看看 NAS 里有什么、空间还剩多少。'));
   let jobsError = null;
   const [overview, jobs] = await Promise.all([
     api('/api/overview'),
-    api('/api/jobs?limit=6').catch((err) => { jobsError = err; return { jobs: [] }; }),
+    api('/api/jobs?limit=60').catch((err) => { jobsError = err; return { jobs: [] }; }),
   ]);
   const app = overview.app || {};
   const cfg = overview.config || {};
@@ -4067,6 +4306,7 @@ async function pageOverview(view) {
     head.appendChild(el('h2', null, t('存储空间', '磁盘空间')));
     card.appendChild(head);
     const body = el('div', 'card-body');
+    body.appendChild(storageUsageChart(filesystems));
     body.appendChild(renderTable('filesystems', filesystems));
     body.appendChild(el('p', 'muted', t('统计范围：媒体库存放位置与允许访问的文件夹；同一块磁盘上的多个文件夹会合并为一行。', '统计了「媒体库存放位置」和「允许访问的文件夹」；同一块硬盘上的几个文件夹会合并成一行。')));
     if (disk.errors && disk.errors.length) {
@@ -4077,6 +4317,20 @@ async function pageOverview(view) {
   } else if (disk.ok === false && disk.error) {
     view.appendChild(errorBox({ code: 'load_failed', message: t('磁盘信息不可用：', '暂时读不到磁盘信息：') + (disk.error.message || '') }, { retry: () => route() }));
   }
+
+  // 能力与任务：工具分类、后台任务结果；数据都来自已经在用的接口
+  const chartsCard = el('article', 'card');
+  const chartsHead = el('div', 'card-head');
+  chartsHead.appendChild(el('h2', null, t('能力与任务', '能力与任务')));
+  chartsHead.appendChild(el('span', 'muted', t('只读现有数据，不额外扫描', '不用额外扫描，直接看现有数据')));
+  chartsCard.appendChild(chartsHead);
+  const chartsBody = el('div', 'card-body');
+  const chartGrid = el('div', 'chart-grid');
+  chartGrid.appendChild(toolCategoryChart());
+  chartGrid.appendChild(jobStatusChart(jobs.jobs || []));
+  chartsBody.appendChild(chartGrid);
+  chartsCard.appendChild(chartsBody);
+  view.appendChild(chartsCard);
 
   // 一键流程：把多步手工衔接串成一条流水线（缺参/无权限会停下来交给用户）
   const flowCard = el('article', 'card');
@@ -4144,7 +4398,7 @@ async function pageOverview(view) {
   rhead.appendChild(more);
   recent.appendChild(rhead);
   const rbody = el('div', 'card-body');
-  const jobList = jobs.jobs || [];
+  const jobList = (jobs.jobs || []).slice(0, 6);
   if (jobsError) {
     rbody.appendChild(errorBox({ code: jobsError.code || 'load_failed', message: jobsError.message }, { retry: () => route() }));
   } else if (!jobList.length) {
@@ -4558,16 +4812,20 @@ function browserCard(path, result) {
 
   // 低频动作收进「更多」，窄屏下头部不再被五个按钮挤爆
   const more = el('details', 'more-menu');
-  const moreSummary = el('summary', 'ghost small more-summary', t('更多', '更多') + ' ▾');
+  const moreSummary = el('summary', 'ghost small more-summary');
+  moreSummary.appendChild(document.createTextNode(t('更多', '更多')));
+  moreSummary.appendChild(icon('chevron', 'more-caret'));
   moreSummary.title = t('复制路径、整理此目录、体检此目录', '复制路径、整理这里、扫描这里');
   more.appendChild(moreSummary);
   const menu = el('div', 'more-list');
   const copy = copyButton(cur, t('复制当前路径', '复制当前路径'));
-  const orgCurBtn = el('button', 'ghost small', '⇄ ' + t('整理此目录', '整理这里'));
+  const orgCurBtn = el('button', 'ghost small');
+  btnContent(orgCurBtn, 'organize', t('整理此目录', '整理这里'));
   orgCurBtn.type = 'button';
   orgCurBtn.title = t('将此目录带入规范整理工具', '把当前文件夹带入整理工具');
   orgCurBtn.addEventListener('click', () => sendToTool('organize_media', { path: cur }));
-  const scanCurBtn = el('button', 'ghost small', '◉ ' + t('体检此目录', '扫描这里'));
+  const scanCurBtn = el('button', 'ghost small');
+  btnContent(scanCurBtn, 'scan', t('体检此目录', '扫描这里'));
   scanCurBtn.type = 'button';
   scanCurBtn.title = t('对当前目录执行媒体体检扫描', '扫描当前文件夹');
   scanCurBtn.addEventListener('click', () => sendToTool('nas_scan_media', { path: cur }));
@@ -4676,7 +4934,8 @@ function configArea(labelText, hint, opts = {}) {
   field.appendChild(input);
   if (opts.picker) {
     const bar = el('div', 'config-pick');
-    const btn = el('button', 'ghost small', '📁 ' + t('从 NAS 选择文件夹…', '从 NAS 里选文件夹…'));
+    const btn = el('button', 'ghost small');
+    btnContent(btn, 'folder', t('从 NAS 选择文件夹…', '从 NAS 里选文件夹…'));
     btn.type = 'button';
     btn.onclick = () => {
       openFilePicker({
@@ -4785,7 +5044,8 @@ function confirmDialog(opts = {}) {
     const box = el('div', 'modal-box narrow');
     const head = el('div', 'modal-head');
     head.appendChild(el('h2', null, title || t('确认', '确认一下')));
-    const closeBtn = el('button', 'modal-close', '×');
+    const closeBtn = el('button', 'modal-close');
+    closeBtn.appendChild(icon('close'));
     closeBtn.type = 'button';
     closeBtn.setAttribute('aria-label', t('关闭', '关闭'));
     closeBtn.onclick = () => finish(false);
@@ -5197,7 +5457,8 @@ async function pageWorkbench(view) {
       const section = el('section', 'tool-group');
       const headBtn = el('button', 'tool-group-head');
       headBtn.type = 'button';
-      const caret = el('span', 'tg-caret', '▾');
+      const caret = el('span', 'tg-caret');
+      caret.appendChild(icon('chevron'));
       headBtn.append(caret, el('strong', null, group.title), el('span', 'muted', matched.length + ' 个功能'));
       headBtn.title = group.hint || '';
       const groupBody = el('div', 'tool-group-body');
@@ -5207,7 +5468,7 @@ async function pageWorkbench(view) {
         const open = q ? searchOpen[group.id] !== false : storedOpen[group.id] !== false;
         headBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
         groupBody.hidden = !open;
-        caret.textContent = open ? '▾' : '▸';
+        caret.classList.toggle('open', open);
       };
       headBtn.addEventListener('click', () => {
         const open = q ? searchOpen[group.id] !== false : storedOpen[group.id] !== false;
@@ -5389,7 +5650,10 @@ async function pollJobsIndicator() {
     const active = jobs.filter((j) => j.status === 'queued' || j.status === 'running').length;
     if (!active) { ind.hidden = true; return; }
     ind.hidden = false;
-    ind.textContent = t(`${active} 个任务进行中`, `${active} 个任务进行中`);
+    const jobsLabel = document.getElementById('jobs-label');
+    const jobsText = t(`${active} 个任务进行中`, `${active} 个任务进行中`);
+    if (jobsLabel) jobsLabel.textContent = jobsText;
+    else ind.textContent = jobsText;
     ind.title = t('点击查看后台任务', '点击查看后台任务');
   } catch (_) {
     /* 指示器失败不影响页面 */
@@ -5406,14 +5670,19 @@ async function refreshHealth() {
     const data = await res.json();
     if (!res.ok || data.ok === false) throw new Error('healthz failed');
     badge.className = 'badge ok';
-    badge.textContent = t(`服务正常 · v${data.version || ''}`, `服务正常 v${data.version || ''}`);
+    badge.textContent = '';
+    badge.appendChild(icon('check'));
+    badge.appendChild(document.createTextNode(t(`服务正常 · v${data.version || ''}`, `服务正常 v${data.version || ''}`)));
   } catch (_) {
     badge.className = 'badge err';
-    badge.textContent = t('服务异常', '服务连不上');
+    badge.textContent = '';
+    badge.appendChild(icon('alert'));
+    badge.appendChild(document.createTextNode(t('服务异常', '服务连不上')));
   }
 }
 
 async function boot() {
+  mountIcons();
   try {
     S.meta = await api('/api/meta');
   } catch (err) {
@@ -5512,5 +5781,5 @@ async function boot() {
   setInterval(tickJobElapsed, 1000);
 }
 
-initUiMode();
+
 boot();

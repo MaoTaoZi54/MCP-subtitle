@@ -288,7 +288,7 @@ class NasAppHandler(BaseHTTPRequestHandler):
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>登录 · {APP_DISPLAY_NAME}</title>
-<meta name="theme-color" content="#fbf4ee" id="theme-color">
+<meta name="theme-color" content="#f4f1ea" id="theme-color">
 <script src="/static/mode.js"></script>
 <script src="/static/login-mode.js"></script>
 <link rel="stylesheet" href="/static/style.css">
@@ -296,11 +296,6 @@ class NasAppHandler(BaseHTTPRequestHandler):
 <main class="login-card">
   <div class="brand"><img src="/static/icon.svg" alt=""><div class="brand-text"><strong>{APP_DISPLAY_NAME}</strong><small class="brand-tagline">把媒体库打理得清清爽爽</small></div></div>
   <p class="muted">请输入访问密码。</p>
-  <div class="mode-switch" id="login-mode-switch" role="group" aria-label="界面风格">
-    <span class="mode-label">界面</span>
-    <button type="button" data-mode="pro" aria-pressed="false">专业版</button>
-    <button type="button" data-mode="friendly" aria-pressed="true">友好版</button>
-  </div>
   {error}
   <form method="post" action="/login">
     <input type="hidden" name="next" value="{next_path}">

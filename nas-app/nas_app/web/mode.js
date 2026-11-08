@@ -1,14 +1,10 @@
 'use strict';
 
-// 在首屏渲染前应用界面风格与配色，避免登录页/主界面先闪一下默认主题。
+// 在首屏渲染前应用配色，避免登录页/主界面先闪一下默认主题。
+// 界面风格已收敛为「档案室」单一样式；旧的 nas-ui-mode 键保留在 localStorage 做迁移，
+// 这里不再读取旧值，也不主动删除，避免残留值影响样式。
 (function () {
-  var mode = 'friendly';
-  try {
-    mode = window.localStorage.getItem('nas-ui-mode') === 'pro' ? 'pro' : 'friendly';
-  } catch (_) {
-    // 隐私模式下 localStorage 可能不可用，回退到友好版。
-  }
-  document.documentElement.dataset.uiMode = mode;
+  document.documentElement.dataset.uiMode = 'pro';
 
   var theme = 'auto';
   try {
