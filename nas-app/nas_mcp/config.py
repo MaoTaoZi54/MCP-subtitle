@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import os
 import re
 from dataclasses import dataclass
@@ -16,8 +17,233 @@ import yaml
 from .security import is_pattern, is_within, expand_roots
 
 
+MAX_CONFIG_ISSUES = 20
+
+# 顶层合法键：未知键（拼写错误/已废弃）会被静默忽略，写错 enable_write 之类的
+# 开关名会导致行为与预期不符，因此按收集式校验上报，和其它问题一起返回。
+KNOWN_TOP_LEVEL_KEYS = frozenset(
+    {
+        "allowed_paths",
+        "exclude_paths",
+        "media_roots",
+        "video_extensions",
+        "subtitle_extensions",
+        "limits",
+        "media",
+        "cleanup",
+        "organizer",
+        "subhd",
+        "opensubtitles",
+        "shooter",
+        "subtitle",
+        "jackett",
+        "tmdb",
+        "tvmaze",
+        "seedhub",
+        "dysbk",
+        "media_search",
+        "logging",
+        "enable_write",
+        "enable_organize",
+        "enable_delete",
+    }
+)
+
+_SECRET_KEY_RE = re.compile(
+    r"(api[_-]?key|token|password|passwd|secret|cookie|authorization)", re.I
+)
+# 从旧式错误消息里提取「a.b.c」形式的键路径（用于无 issues 的错误降级定位）
+_KEY_PATH_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-]*(?:\.[A-Za-z_][A-Za-z0-9_\-]*)+")
+_UNSET = object()
+
+
+@dataclass(frozen=True)
+class ConfigIssue:
+    """一条配置问题：定位到键与行号，并给出期望值/当前值。
+
+    severity: error（阻断加载）/ warning（可加载但需关注）。
+    敏感键（api_key/token/password 等）的 actual 一律为 ***。
+    """
+
+    key: str
+    message: str
+    section: str = ""
+    expected: str = ""
+    actual: str = ""
+    line: int | None = None
+    column: int | None = None
+    severity: str = "error"
+    hint: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "section": self.section,
+            "expected": self.expected,
+            "actual": self.actual,
+            "line": self.line,
+            "column": self.column,
+            "severity": self.severity,
+            "hint": self.hint,
+            "message": self.message,
+        }
+
+    def render(self) -> str:
+        where = f"第{self.line}行 " if self.line else ""
+        text = f"{where}{self.key}: {self.message}"
+        if self.hint:
+            text += f"（建议: {self.hint}）"
+        return text
+
+
 class ConfigError(Exception):
-    """配置缺失或非法。"""
+    """配置缺失或非法。
+
+    issues 为空表示旧式单条错误（message 即全部信息）；收集式校验会带上
+    结构化 issues（键/行号/期望值/当前值），由装配层映射为 config_invalid。
+    missing=True 仅用于「配置文件不存在」，装配层据此返回 not_configured。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        issues: list[ConfigIssue] | None = None,
+        file: str = "",
+        missing: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.issues = list(issues or [])
+        self.file = file
+        self.missing = missing
+
+
+class _SourceIndex:
+    """从 YAML 文本建立「点分键路径 → (行, 列)」索引（1 基），用于错误定位。"""
+
+    def __init__(self, text: str) -> None:
+        self._marks: dict[str, tuple[int, int]] = {}
+        try:
+            root = yaml.compose(text)
+        except yaml.YAMLError:
+            root = None
+        if root is not None:
+            self._walk(root, "")
+
+    def _walk(self, node: Any, prefix: str) -> None:
+        if isinstance(node, yaml.MappingNode):
+            for key_node, value_node in node.value:
+                key = str(getattr(key_node, "value", ""))
+                path = f"{prefix}.{key}" if prefix else key
+                self._marks.setdefault(
+                    path, (value_node.start_mark.line + 1, value_node.start_mark.column + 1)
+                )
+                self._walk(value_node, path)
+        elif isinstance(node, yaml.SequenceNode):
+            for position, item in enumerate(node.value):
+                path = f"{prefix}[{position}]"
+                self._marks.setdefault(
+                    path, (item.start_mark.line + 1, item.start_mark.column + 1)
+                )
+                self._walk(item, path)
+        elif isinstance(node, yaml.ScalarNode) and prefix:
+            self._marks.setdefault(
+                prefix, (node.start_mark.line + 1, node.start_mark.column + 1)
+            )
+
+    def locate(self, key: str) -> tuple[int | None, int | None]:
+        """按键路径查行号；查不到时逐级回退到父节点（如 allowed_paths[3] → allowed_paths）。"""
+        if key in self._marks:
+            return self._marks[key]
+        parts = [re.sub(r"\[\d+\]$", "", part) for part in key.split(".")]
+        for cut in range(len(parts) - 1, 0, -1):
+            parent = ".".join(parts[:cut])
+            if parent in self._marks:
+                return self._marks[parent]
+        return None, None
+
+
+_INDEX: contextvars.ContextVar[_SourceIndex | None] = contextvars.ContextVar(
+    "nas_config_index", default=None
+)
+_CONFIG_FILE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "nas_config_file", default=""
+)
+_COLLECTOR: contextvars.ContextVar[list[ConfigIssue] | None] = contextvars.ContextVar(
+    "nas_config_issues", default=None
+)
+
+
+def _redact_actual(key: str, value: Any) -> str:
+    """敏感键的当前值一律替换为 ***（错误信息/日志绝不泄露密钥）。"""
+    if _SECRET_KEY_RE.search(key):
+        return "***"
+    text = repr(value)
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
+def _issue_for(
+    key: str,
+    message: str,
+    *,
+    expected: str = "",
+    actual: Any = _UNSET,
+    hint: str = "",
+    severity: str = "error",
+) -> ConfigIssue:
+    index = _INDEX.get()
+    line, column = index.locate(key) if index is not None else (None, None)
+    return ConfigIssue(
+        key=key,
+        message=message,
+        section=key.split(".")[0].split("[")[0],
+        expected=expected,
+        actual="" if actual is _UNSET else _redact_actual(key, actual),
+        line=line,
+        column=column,
+        severity=severity,
+        hint=hint,
+    )
+
+
+def _fail(
+    key: str,
+    message: str,
+    *,
+    expected: str = "",
+    actual: Any = _UNSET,
+    hint: str = "",
+    severity: str = "error",
+) -> None:
+    """抛出带键/行号/期望值/当前值的配置错误（由所在 section 收集）。"""
+    issue = _issue_for(
+        key, message, expected=expected, actual=actual, hint=hint, severity=severity
+    )
+    raise ConfigError(message, issues=[issue], file=_CONFIG_FILE.get())
+
+
+def _issue_from_error(exc: ConfigError, label: str) -> ConfigIssue:
+    """把没有结构化 issues 的旧式错误降级为 issue（键取消息里的点分路径）。"""
+    message = str(exc)
+    match = _KEY_PATH_RE.search(message)
+    key = match.group(0) if match else label
+    if _SECRET_KEY_RE.search(key):
+        message = "配置项取值不合法（敏感值已隐藏）"
+    return _issue_for(key, message)
+
+
+def _try(label: str, fn, fallback: Any) -> Any:
+    """执行一个校验片段：收集错误并返回默认值；无收集上下文时保持 fail-fast。"""
+    try:
+        return fn()
+    except ConfigError as exc:
+        collector = _COLLECTOR.get()
+        if collector is None:
+            raise
+        for issue in (exc.issues or [_issue_from_error(exc, label)]):
+            if len(collector) < MAX_CONFIG_ISSUES:
+                collector.append(issue)
+        return fallback
 
 
 DEFAULT_VIDEO_EXTENSIONS = ("mkv", "mp4", "avi", "mov", "ts", "m2ts", "webm", "wmv", "flv")
@@ -342,12 +568,37 @@ class NasConfig:
     enable_delete: bool = False
 
 
+def _require_existing(paths: tuple[str, ...], field: str) -> None:
+    """字面量路径必须存在；glob 条目留到运行时展开（卷未挂载不应阻断启动）。"""
+    for p in paths:
+        if is_pattern(p):
+            continue
+        if not Path(p).exists():
+            _fail(
+                field,
+                f"{field} 中的路径不存在: {p}",
+                expected="已存在的目录",
+                actual=p,
+                hint="确认存储卷已挂载；可能临时缺失的卷请改用 glob，如 /vol[1-9]*/1000",
+            )
+
+
 def _resolve(p: Any, field: str) -> str:
     if not isinstance(p, str) or not p.strip():
-        raise ConfigError(f"{field} 中的每一项都必须是非空字符串路径")
+        _fail(
+            field,
+            f"{field} 中的每一项都必须是非空字符串路径",
+            expected="非空绝对路径字符串",
+            actual=p,
+        )
     path = Path(os.path.expanduser(p.strip()))
     if not path.is_absolute():
-        raise ConfigError(f"{field} 必须是绝对路径: {p!r}")
+        _fail(
+            field,
+            f"{field} 必须是绝对路径: {p!r}",
+            expected="绝对路径（以 / 开头）",
+            actual=p,
+        )
     return str(path.resolve())
 
 
@@ -355,7 +606,12 @@ def _positive_int(value: Any, default: int, field: str) -> int:
     if value is None:
         return default
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-        raise ConfigError(f"{field} 必须是正整数，得到: {value!r}")
+        _fail(
+            field,
+            f"{field} 必须是正整数，得到: {value!r}",
+            expected="正整数 (>0)",
+            actual=value,
+        )
     return value
 
 
@@ -363,8 +619,26 @@ def _nonneg_int(value: Any, default: int, field: str) -> int:
     if value is None:
         return default
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise ConfigError(f"{field} 必须是非负整数，得到: {value!r}")
+        _fail(
+            field,
+            f"{field} 必须是非负整数，得到: {value!r}",
+            expected="非负整数 (≥0)",
+            actual=value,
+        )
     return value
+
+
+def _positive_float(value: Any, default: float, field: str) -> float:
+    if value is None:
+        return default
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        _fail(
+            field,
+            f"{field} 必须是正数，得到: {value!r}",
+            expected="正数 (>0)",
+            actual=value,
+        )
+    return float(value)
 
 
 def _strict_bool(value: Any, default: bool, field: str) -> bool:
@@ -377,7 +651,13 @@ def _strict_bool(value: Any, default: bool, field: str) -> bool:
         return default
     if isinstance(value, bool):
         return value
-    raise ConfigError(f"{field} 必须是布尔值 true/false（不要加引号），得到: {value!r}")
+    _fail(
+        field,
+        f"{field} 必须是布尔值 true/false（不要加引号），得到: {value!r}",
+        expected="布尔值 true/false（YAML 布尔，不加引号）",
+        actual=value,
+        hint="字符串 \"false\" 会被当成真值，必须写成 false",
+    )
 
 
 def _str_list(value: Any, default: tuple[str, ...], field: str) -> tuple[str, ...]:
@@ -385,11 +665,21 @@ def _str_list(value: Any, default: tuple[str, ...], field: str) -> tuple[str, ..
     if value is None:
         return tuple(default)
     if not isinstance(value, list):
-        raise ConfigError(f"{field} 必须是字符串列表，得到: {value!r}")
+        _fail(
+            field,
+            f"{field} 必须是字符串列表，得到: {value!r}",
+            expected="字符串列表",
+            actual=value,
+        )
     out: list[str] = []
     for item in value:
         if not isinstance(item, str) or not item.strip():
-            raise ConfigError(f"{field} 的每一项必须是非空字符串，得到: {item!r}")
+            _fail(
+                field,
+                f"{field} 的每一项必须是非空字符串，得到: {item!r}",
+                expected="非空字符串",
+                actual=item,
+            )
         out.append(item.strip())
     return tuple(out)
 
@@ -399,8 +689,11 @@ def _sort_field(value: Any, field: str) -> str:
     if value is None:
         return "seeders"
     if not isinstance(value, str) or value.strip() not in ("seeders", "quality", "hybrid"):
-        raise ConfigError(
-            f"{field} 只能是 seeders/quality/hybrid，得到: {value!r}"
+        _fail(
+            field,
+            f"{field} 只能是 seeders/quality/hybrid，得到: {value!r}",
+            expected="seeders / quality / hybrid",
+            actual=value,
         )
     return value.strip()
 
@@ -423,7 +716,12 @@ def _resolve_api_key(raw: dict[str, Any], field: str, default_env: str, enabled:
     if not api_key:
         literal = raw.get("api_key", "")
         if not isinstance(literal, str):
-            raise ConfigError(f"{field}.api_key 必须是字符串")
+            _fail(
+                f"{field}.api_key",
+                f"{field}.api_key 必须是字符串",
+                expected="字符串（支持 ${{VAR}} 环境变量语法）",
+                actual=literal,
+            )
         literal = literal.strip()
         m = _ENV_PATTERN.match(literal)
         if m:
@@ -434,9 +732,12 @@ def _resolve_api_key(raw: dict[str, Any], field: str, default_env: str, enabled:
         else:
             api_key = literal
     if enabled and not api_key:
-        raise ConfigError(
+        _fail(
+            f"{field}.enabled",
             f"{field}.enabled=true 但未配置 API Key"
-            f"（设置 api_key、api_key: ${{{default_env}}} 或环境变量 {api_key_env or default_env}）"
+            f"（设置 api_key、api_key: ${{{default_env}}} 或环境变量 {api_key_env or default_env}）",
+            expected="已配置 api_key / api_key_env / 对应环境变量",
+            actual="<未配置>",
         )
     return api_key, api_key_env
 
@@ -461,29 +762,53 @@ def _load_skip_patterns(
             (p, DEFAULT_SKIP_PATTERN_CATEGORIES.get(p, "")) for p in pats
         )
     if not isinstance(raw, list):
-        raise ConfigError("media.skip_filename_patterns 必须是列表（空列表表示关闭）")
+        raise ConfigError(
+            "media.skip_filename_patterns 必须是列表（空列表表示关闭）",
+            issues=[
+                _issue_for(
+                    "media.skip_filename_patterns",
+                    "必须是列表（空列表表示关闭）",
+                    expected="列表",
+                    actual=raw,
+                )
+            ],
+        )
     patterns: list[str] = []
     categories: list[tuple[str, str]] = []
     for entry in raw:
         if isinstance(entry, str):
             pat = entry.strip()
             if not pat:
-                raise ConfigError("media.skip_filename_patterns 中存在空模式")
+                _fail("media.skip_filename_patterns", "media.skip_filename_patterns 中存在空模式",
+                      expected="非空正则字符串", actual=entry)
             cat = DEFAULT_SKIP_PATTERN_CATEGORIES.get(pat, "")
         elif isinstance(entry, dict):
             pat = str(entry.get("pattern", "")).strip()
             if not pat:
-                raise ConfigError("media.skip_filename_patterns 条目缺 pattern")
+                _fail("media.skip_filename_patterns",
+                      "media.skip_filename_patterns 条目缺 pattern",
+                      expected="{pattern: 非空正则, category: 可选}", actual=entry)
             cat = str(entry.get("category", "") or "").strip()
         else:
-            raise ConfigError(
-                "media.skip_filename_patterns 每项必须是字符串或 {pattern, category} 映射"
+            _fail(
+                "media.skip_filename_patterns",
+                "media.skip_filename_patterns 每项必须是字符串或 {pattern, category} 映射",
+                expected="字符串或 {pattern, category} 映射",
+                actual=entry,
             )
         try:
             re.compile(pat, re.IGNORECASE)
         except re.error as exc:
             raise ConfigError(
-                f"media.skip_filename_patterns 中存在非法正则 {pat!r}: {exc}"
+                f"media.skip_filename_patterns 中存在非法正则 {pat!r}: {exc}",
+                issues=[
+                    _issue_for(
+                        "media.skip_filename_patterns",
+                        f"非法正则 {pat!r}: {exc}",
+                        expected="可编译的正则表达式",
+                        actual=pat,
+                    )
+                ],
             ) from exc
         if pat not in {p for p in patterns}:
             patterns.append(pat)
@@ -495,7 +820,7 @@ def _load_cleanup(data: dict[str, Any]) -> CleanupConfig:
     """解析 cleanup 段（media_cleanup，v1.7.2 §22/§25）。"""
     raw = data.get("cleanup") or {}
     if not isinstance(raw, dict):
-        raise ConfigError("cleanup 必须是映射")
+        _fail("cleanup", "cleanup 必须是映射", expected="键值映射", actual=raw)
     field = "cleanup"
     junk_raw = raw.get("junk_extensions")
     if junk_raw is None:
@@ -504,7 +829,12 @@ def _load_cleanup(data: dict[str, Any]) -> CleanupConfig:
         if not isinstance(junk_raw, list) or not all(
             isinstance(x, str) and x.strip() for x in junk_raw
         ):
-            raise ConfigError(f"{field}.junk_extensions 必须是非空字符串列表")
+            _fail(
+                f"{field}.junk_extensions",
+                f"{field}.junk_extensions 必须是非空字符串列表",
+                expected="非空字符串列表（如 [.part, .tmp]）",
+                actual=junk_raw,
+            )
         # 统一带点小写存储（"part" / ".part" 两种写法都接受）
         junk_exts = tuple(
             "." + x.strip().lower().lstrip(".") for x in junk_raw if x.strip()
@@ -523,12 +853,7 @@ def _load_cleanup(data: dict[str, Any]) -> CleanupConfig:
 
 def _timeout_field(raw: dict[str, Any], default: float, field: str,
                    name: str = "timeout_seconds") -> float:
-    value = raw.get(name)
-    if value is None:
-        return default
-    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
-        raise ConfigError(f"{field}.{name} 必须是正数，得到: {value!r}")
-    return float(value)
+    return _positive_float(raw.get(name), default, f"{field}.{name}")
 
 
 def _load_interval(raw: dict[str, Any], field: str, default: float) -> float:
@@ -537,7 +862,12 @@ def _load_interval(raw: dict[str, Any], field: str, default: float) -> float:
     if v is None:
         return default
     if not isinstance(v, (int, float)) or isinstance(v, bool) or v < 0:
-        raise ConfigError(f"{field}.min_request_interval_seconds 必须是非负数，得到: {v!r}")
+        _fail(
+            f"{field}.min_request_interval_seconds",
+            f"{field}.min_request_interval_seconds 必须是非负数，得到: {v!r}",
+            expected="非负数 (≥0)",
+            actual=v,
+        )
     return float(v)
 
 
@@ -565,14 +895,19 @@ def _url_field(raw: dict[str, Any], default: str, field: str, *, default_env: st
     if not url:
         url = default
     if not url.startswith(("http://", "https://")):
-        raise ConfigError(f"{field} 的地址必须是 http/https，得到: {url!r}")
+        _fail(
+            field,
+            f"{field} 的地址必须是 http/https，得到: {url!r}",
+            expected="http:// 或 https:// 开头的地址",
+            actual=url,
+        )
     return url, url_env
 
 
 def _load_jackett(data: dict[str, Any]) -> JackettConfig:
     raw = data.get("jackett") or {}
     if not isinstance(raw, dict):
-        raise ConfigError("jackett 必须是映射")
+        _fail("jackett", "jackett 必须是映射", expected="键值映射", actual=raw)
     field = "jackett"
     enabled = _strict_bool(raw.get("enabled"), False, f"{field}.enabled")
     api_key, api_key_env = _resolve_api_key(raw, field, "JACKETT_API_KEY", enabled)
@@ -622,7 +957,7 @@ def _load_jackett(data: dict[str, Any]) -> JackettConfig:
 def _load_tmdb(data: dict[str, Any]) -> TmdbConfig:
     raw = data.get("tmdb") or {}
     if not isinstance(raw, dict):
-        raise ConfigError("tmdb 必须是映射")
+        _fail("tmdb", "tmdb 必须是映射", expected="键值映射", actual=raw)
     field = "tmdb"
     enabled = _strict_bool(raw.get("enabled"), False, f"{field}.enabled")
     api_key, api_key_env = _resolve_api_key(raw, field, "TMDB_API_KEY", enabled)
@@ -644,7 +979,7 @@ def _load_tvmaze(data: dict[str, Any]) -> TvmazeConfig:
     """解析 tvmaze 段（TMDB 回落源）：缺失走默认值，老 config.yaml 不报错。"""
     raw = data.get("tvmaze") or {}
     if not isinstance(raw, dict):
-        raise ConfigError("tvmaze 必须是映射")
+        _fail("tvmaze", "tvmaze 必须是映射", expected="键值映射", actual=raw)
     field = "tvmaze"
     enabled = _strict_bool(raw.get("enabled"), False, f"{field}.enabled")
     base_url = str(raw.get("base_url", TvmazeConfig.base_url)).strip().rstrip("/")
@@ -661,7 +996,7 @@ def _load_seedhub(data: dict[str, Any]) -> SeedhubConfig:
     """解析 seedhub 段（S4）：缺失走默认值，老 config.yaml 不报错。"""
     raw = data.get("seedhub") or {}
     if not isinstance(raw, dict):
-        raise ConfigError("seedhub 必须是映射")
+        _fail("seedhub", "seedhub 必须是映射", expected="键值映射", actual=raw)
     field = "seedhub"
     enabled = _strict_bool(raw.get("enabled"), True, f"{field}.enabled")
     base_url = str(raw.get("base_url", SeedhubConfig.base_url)).strip().rstrip("/")
@@ -687,7 +1022,7 @@ def _load_dysbk(data: dict[str, Any]) -> DysbkConfig:
     """解析 dysbk 段（S4）：缺失走默认值，老 config.yaml 不报错。"""
     raw = data.get("dysbk") or {}
     if not isinstance(raw, dict):
-        raise ConfigError("dysbk 必须是映射")
+        _fail("dysbk", "dysbk 必须是映射", expected="键值映射", actual=raw)
     field = "dysbk"
     enabled = _strict_bool(raw.get("enabled"), True, f"{field}.enabled")
     base_url = str(raw.get("base_url", DysbkConfig.base_url)).strip().rstrip("/")
@@ -700,7 +1035,7 @@ def _load_media_search(data: dict[str, Any]) -> MediaSearchConfig:
     """解析 media_search 段（S4 方案 A 预算表）：缺失走默认值。"""
     raw = data.get("media_search") or {}
     if not isinstance(raw, dict):
-        raise ConfigError("media_search 必须是映射")
+        _fail("media_search", "media_search 必须是映射", expected="键值映射", actual=raw)
     field = "media_search"
     return MediaSearchConfig(
         dysbk_timeout_seconds=_timeout_field(
@@ -713,7 +1048,7 @@ def _load_media_search(data: dict[str, Any]) -> MediaSearchConfig:
 def _load_opensubtitles(data: dict[str, Any]) -> OpensubtitlesConfig:
     raw = data.get("opensubtitles") or {}
     if not isinstance(raw, dict):
-        raise ConfigError("opensubtitles 必须是映射")
+        _fail("opensubtitles", "opensubtitles 必须是映射", expected="键值映射", actual=raw)
     field = "opensubtitles"
     enabled = _strict_bool(raw.get("enabled"), False, f"{field}.enabled")
     api_key, api_key_env = _resolve_api_key(raw, field, "OPENSUBTITLES_API_KEY", enabled)
@@ -745,7 +1080,7 @@ def _load_opensubtitles(data: dict[str, Any]) -> OpensubtitlesConfig:
 def _load_shooter(data: dict[str, Any]) -> ShooterConfig:
     raw = data.get("shooter") or {}
     if not isinstance(raw, dict):
-        raise ConfigError("shooter 必须是映射")
+        _fail("shooter", "shooter 必须是映射", expected="键值映射", actual=raw)
     field = "shooter"
     enabled = _strict_bool(raw.get("enabled"), False, f"{field}.enabled")
     # token 解析：token_env 优先，然后 ${VAR} 字面量
@@ -786,7 +1121,7 @@ def _load_shooter(data: dict[str, Any]) -> ShooterConfig:
 def _load_subtitles(data: dict[str, Any]) -> SubtitlesConfig:
     raw = data.get("subtitle") or {}
     if not isinstance(raw, dict):
-        raise ConfigError("subtitle 必须是映射")
+        _fail("subtitle", "subtitle 必须是映射", expected="键值映射", actual=raw)
     valid_sites = {"subhd", "opensubtitles", "shooter"}
     order_raw = raw.get("site_order")
     if order_raw is None:
@@ -826,122 +1161,11 @@ def _load_subtitles(data: dict[str, Any]) -> SubtitlesConfig:
     )
 
 
-def load_config(path: str) -> NasConfig:
-    file = Path(path)
-    if not file.is_file():
-        raise ConfigError(
-            f"配置文件不存在: {file}（可用 --config 参数或环境变量 NAS_MCP_CONFIG 指定）"
-        )
-    try:
-        data = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
-    except (yaml.YAMLError, OSError) as exc:
-        raise ConfigError(f"配置文件读取/解析失败: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ConfigError("配置文件顶层必须是键值映射")
-
-    # ---- 白名单：必须配置且非空 ----
-    allowed_raw = data.get("allowed_paths")
-    if not isinstance(allowed_raw, list) or not allowed_raw:
-        raise ConfigError("allowed_paths 必须是非空列表——没有白名单就不允许启动")
-    allowed = tuple(dict.fromkeys(_resolve(p, "allowed_paths") for p in allowed_raw))
-
-    # ---- 排除目录 ----
-    exclude_raw = data.get("exclude_paths") or []
-    if not isinstance(exclude_raw, list):
-        raise ConfigError("exclude_paths 必须是列表")
-    excluded = tuple(dict.fromkeys(_resolve(p, "exclude_paths") for p in exclude_raw))
-
-    # 排除目录优先于白名单：若整个白名单根被排除，属于配置矛盾，直接拒绝启动。
-    # 模式条目（glob）无法静态判定包含关系，交给 PathGuard 运行时实时裁决。
-    for a in allowed:
-        for e in excluded:
-            if is_pattern(a) or is_pattern(e):
-                continue
-            if is_within(Path(a), Path(e)):
-                raise ConfigError(f"白名单目录 {a} 位于排除目录 {e} 之内，配置矛盾")
-
-    # ---- 搜索范围（默认等于白名单）----
-    media_raw = data.get("media_roots")
-    if media_raw is None:
-        media_roots = allowed
-    else:
-        if not isinstance(media_raw, list) or not media_raw:
-            raise ConfigError("media_roots 必须是非空列表（留空请删除该键，默认取 allowed_paths）")
-        media_roots = tuple(dict.fromkeys(_resolve(p, "media_roots") for p in media_raw))
-    for m in media_roots:
-        if is_pattern(m) or any(is_pattern(a) for a in allowed):
-            continue  # 含模式条目时跳过静态包含校验，运行时由 PathGuard 实时裁决
-        if not any(is_within(Path(m), Path(a)) for a in allowed):
-            raise ConfigError(f"media_roots 中的 {m} 不在 allowed_paths 白名单内")
-
-    # ---- 扩展名 ----
-    def _ext_set(key: str, default: tuple[str, ...]) -> frozenset[str]:
-        val = data.get(key, list(default))
-        if not isinstance(val, list):
-            raise ConfigError(f"{key} 必须是列表")
-        items = frozenset(
-            str(v).lower().lstrip(".").strip() for v in val if str(v).strip()
-        )
-        if not items:
-            raise ConfigError(f"{key} 不能为空")
-        return items
-
-    video_exts = _ext_set("video_extensions", DEFAULT_VIDEO_EXTENSIONS)
-    subtitle_exts = _ext_set("subtitle_extensions", DEFAULT_SUBTITLE_EXTENSIONS)
-
-    # ---- 限额 ----
-    lim_raw = data.get("limits") or {}
-    if not isinstance(lim_raw, dict):
-        raise ConfigError("limits 必须是映射")
-    limits = Limits(
-        max_list_entries=_positive_int(lim_raw.get("max_list_entries"), 500, "limits.max_list_entries"),
-        max_search_results=_positive_int(lim_raw.get("max_search_results"), 100, "limits.max_search_results"),
-        max_scan_files=_positive_int(lim_raw.get("max_scan_files"), 100_000, "limits.max_scan_files"),
-        max_list_depth=_positive_int(lim_raw.get("max_list_depth"), 10, "limits.max_list_depth"),
-        max_errors_reported=_positive_int(lim_raw.get("max_errors_reported"), 20, "limits.max_errors_reported"),
-    )
-
-    # ---- 媒体分析（ffprobe） ----
-    media_raw = data.get("media") or {}
-    if not isinstance(media_raw, dict):
-        raise ConfigError("media 必须是映射")
-    ffprobe_path = str(media_raw.get("ffprobe_path", "ffprobe")).strip() or "ffprobe"
-    timeout_raw = media_raw.get("ffprobe_timeout_seconds")
-    if timeout_raw is None:
-        ffprobe_timeout = 20.0
-    else:
-        if not isinstance(timeout_raw, (int, float)) or isinstance(timeout_raw, bool) or timeout_raw <= 0:
-            raise ConfigError(f"media.ffprobe_timeout_seconds 必须是正数，得到: {timeout_raw!r}")
-        ffprobe_timeout = float(timeout_raw)
-    ffmpeg_path = str(media_raw.get("ffmpeg_path", "ffmpeg")).strip() or "ffmpeg"
-    ffmpeg_timeout_raw = media_raw.get("ffmpeg_timeout_seconds")
-    if ffmpeg_timeout_raw is None:
-        ffmpeg_timeout = 300.0
-    else:
-        if not isinstance(ffmpeg_timeout_raw, (int, float)) or isinstance(ffmpeg_timeout_raw, bool) or ffmpeg_timeout_raw <= 0:
-            raise ConfigError(f"media.ffmpeg_timeout_seconds 必须是正数，得到: {ffmpeg_timeout_raw!r}")
-        ffmpeg_timeout = float(ffmpeg_timeout_raw)
-    skip_pats, skip_cats = _load_skip_patterns(media_raw)
-    media_cfg = MediaConfig(
-        ffprobe_path=ffprobe_path,
-        ffprobe_timeout_seconds=ffprobe_timeout,
-        ffmpeg_path=ffmpeg_path,
-        ffmpeg_timeout_seconds=ffmpeg_timeout,
-        max_probe_files=_positive_int(
-            media_raw.get("max_probe_files"), 200, "media.max_probe_files"
-        ),
-        max_classify_batch=_positive_int(
-            media_raw.get("max_classify_batch"), 20, "media.max_classify_batch"
-        ),
-        skip_filename_patterns=skip_pats,
-        skip_pattern_categories=skip_cats,
-    )
-    cleanup_cfg = _load_cleanup(data)
-
-    # ---- 媒体目录整理（M9：organize_media / find_media） ----
+def _load_organizer(data: dict[str, Any], file: Path) -> OrganizerConfig:
+    """解析 organizer 段（相对审计日志路径落到数据目录/配置文件目录）。"""
     org_raw = data.get("organizer") or {}
     if not isinstance(org_raw, dict):
-        raise ConfigError("organizer 必须是映射")
+        _fail("organizer", "organizer 必须是映射", expected="键值映射", actual=org_raw)
     special_raw = org_raw.get("special_dir_names")
     if special_raw is None:
         special_dirs = OrganizerConfig.special_dir_names
@@ -949,7 +1173,12 @@ def load_config(path: str) -> NasConfig:
         if not isinstance(special_raw, list) or not all(
             isinstance(x, str) and x.strip() for x in special_raw
         ):
-            raise ConfigError("organizer.special_dir_names 必须是非空字符串列表")
+            _fail(
+                "organizer.special_dir_names",
+                "organizer.special_dir_names 必须是非空字符串列表",
+                expected="非空字符串列表",
+                actual=special_raw,
+            )
         special_dirs = tuple(x.strip().lower() for x in special_raw)
     follow_raw = org_raw.get("follow_extensions")
     if follow_raw is None:
@@ -958,7 +1187,12 @@ def load_config(path: str) -> NasConfig:
         if not isinstance(follow_raw, list) or not all(
             isinstance(x, str) and x.strip() for x in follow_raw
         ):
-            raise ConfigError("organizer.follow_extensions 必须是非空字符串列表")
+            _fail(
+                "organizer.follow_extensions",
+                "organizer.follow_extensions 必须是非空字符串列表",
+                expected="非空字符串列表",
+                actual=follow_raw,
+            )
         follow_exts = tuple(x.strip().lstrip(".").lower() for x in follow_raw if x.strip())
     # 相对路径优先解析到 OCTOP_DATA_DIR / NAS_DATA_DIR 环境变量所指持久化目录，
     # 缺省时相对配置文件所在目录解析（避免落到调用方 cwd）。
@@ -976,100 +1210,397 @@ def load_config(path: str) -> NasConfig:
             audit_path = Path(data_dir) / audit_path
         else:
             audit_path = file.parent / audit_path
-    organizer_cfg = OrganizerConfig(
-        max_move_files=_positive_int(org_raw.get("max_move_files"), 200, "organizer.max_move_files"),
+    return OrganizerConfig(
+        max_move_files=_positive_int(
+            org_raw.get("max_move_files"), 200, "organizer.max_move_files"
+        ),
         special_dir_names=special_dirs,
         follow_extensions=follow_exts,
         audit_log_file=str(audit_path),
     )
 
-    # ---- SubHD（M4：nas_search_subtitles / nas_download_subtitle） ----
+
+def _load_subhd(data: dict[str, Any]) -> SubhdConfig:
+    """解析 subhd 段（M4）。"""
     subhd_raw = data.get("subhd") or {}
     if not isinstance(subhd_raw, dict):
-        raise ConfigError("subhd 必须是映射")
-    subhd_enabled = _strict_bool(subhd_raw.get("enabled"), False, "subhd.enabled")
+        _fail("subhd", "subhd 必须是映射", expected="键值映射", actual=subhd_raw)
     base_url = str(subhd_raw.get("base_url", "https://subhd.tv")).strip().rstrip("/")
     if not base_url.startswith(("http://", "https://")):
-        raise ConfigError(f"subhd.base_url 必须是 http/https 地址，得到: {base_url!r}")
-    subhd_timeout_raw = subhd_raw.get("timeout_seconds")
-    if subhd_timeout_raw is None:
-        subhd_timeout = 30.0
-    else:
-        if not isinstance(subhd_timeout_raw, (int, float)) or isinstance(subhd_timeout_raw, bool) or subhd_timeout_raw <= 0:
-            raise ConfigError(f"subhd.timeout_seconds 必须是正数，得到: {subhd_timeout_raw!r}")
-        subhd_timeout = float(subhd_timeout_raw)
-    subhd_max_retries = _nonneg_int(
-        subhd_raw.get("max_retries"), 2, "subhd.max_retries")
-    connect_timeout_raw = subhd_raw.get("connect_timeout_seconds")
-    if connect_timeout_raw is None:
-        subhd_connect_timeout = 8.0
-    else:
-        if (
-            not isinstance(connect_timeout_raw, (int, float))
-            or isinstance(connect_timeout_raw, bool)
-            or connect_timeout_raw <= 0
-        ):
-            raise ConfigError(
-                f"subhd.connect_timeout_seconds 必须是正数，得到: {connect_timeout_raw!r}"
-            )
-        subhd_connect_timeout = float(connect_timeout_raw)
-    interval_raw = subhd_raw.get("min_request_interval_seconds")
-    if interval_raw is None:
-        min_interval = 1.0
-    else:
-        if not isinstance(interval_raw, (int, float)) or isinstance(interval_raw, bool) or interval_raw < 0:
-            raise ConfigError(
-                f"subhd.min_request_interval_seconds 必须是非负数，得到: {interval_raw!r}"
-            )
-        min_interval = float(interval_raw)
+        _fail(
+            "subhd.base_url",
+            f"subhd.base_url 必须是 http/https 地址，得到: {base_url!r}",
+            expected="http:// 或 https:// 地址",
+            actual=base_url,
+        )
     filename_template = str(subhd_raw.get("filename_template", "{stem}.{lang}.{ext}")).strip()
     if not filename_template:
-        raise ConfigError("subhd.filename_template 不能为空")
+        _fail(
+            "subhd.filename_template",
+            "subhd.filename_template 不能为空",
+            expected="包含 {stem}/{lang}/{ext} 的文件名模板",
+            actual=filename_template,
+        )
     for placeholder in ("{stem}", "{lang}", "{ext}"):
         if placeholder not in filename_template:
-            raise ConfigError(
-                f"subhd.filename_template 必须包含 {placeholder} 占位符，得到: {filename_template!r}"
+            _fail(
+                "subhd.filename_template",
+                f"subhd.filename_template 必须包含 {placeholder} 占位符，得到: {filename_template!r}",
+                expected="同时包含 {stem}、{lang}、{ext} 占位符",
+                actual=filename_template,
             )
-    subhd_cfg = SubhdConfig(
-        enabled=subhd_enabled,
+    return SubhdConfig(
+        enabled=_strict_bool(subhd_raw.get("enabled"), False, "subhd.enabled"),
         base_url=base_url,
-        timeout_seconds=subhd_timeout,
-        connect_timeout_seconds=subhd_connect_timeout,
-        max_retries=subhd_max_retries,
+        timeout_seconds=_positive_float(
+            subhd_raw.get("timeout_seconds"), 30.0, "subhd.timeout_seconds"
+        ),
+        connect_timeout_seconds=_positive_float(
+            subhd_raw.get("connect_timeout_seconds"), 8.0, "subhd.connect_timeout_seconds"
+        ),
+        max_retries=_nonneg_int(subhd_raw.get("max_retries"), 2, "subhd.max_retries"),
         max_results=_positive_int(subhd_raw.get("max_results"), 20, "subhd.max_results"),
         max_download_bytes=_positive_int(
             subhd_raw.get("max_download_bytes"), 20 * 1024 * 1024, "subhd.max_download_bytes"
         ),
-        min_request_interval_seconds=min_interval,
+        min_request_interval_seconds=_load_interval(subhd_raw, "subhd", 1.0),
         user_agent=str(subhd_raw.get("user_agent", SubhdConfig.user_agent)),
         filename_template=filename_template,
     )
 
-    # ---- OpenSubtitles / Shooter / 字幕编排 ----
-    opensubtitles_cfg = _load_opensubtitles(data)
-    shooter_cfg = _load_shooter(data)
-    subtitles_cfg = _load_subtitles(data)
 
-    # ---- Jackett 资源搜索（P4：jackett_search）与 TMDB 影视识别（P3：resolve_media） ----
-    jackett_cfg = _load_jackett(data)
-    tmdb_cfg = _load_tmdb(data)
-    tvmaze_cfg = _load_tvmaze(data)
-
-    # ---- S4：SeedHub / 网盘资源分享社 / media_search 预算（缺失全走默认值） ----
-    seedhub_cfg = _load_seedhub(data)
-    dysbk_cfg = _load_dysbk(data)
-    media_search_cfg = _load_media_search(data)
-
-    # ---- 日志 ----
+def _load_logging(data: dict[str, Any]) -> LoggingConfig:
     log_raw = data.get("logging") or {}
     if not isinstance(log_raw, dict):
-        raise ConfigError("logging 必须是映射")
-    logging_cfg = LoggingConfig(
+        _fail("logging", "logging 必须是映射", expected="键值映射", actual=log_raw)
+    return LoggingConfig(
         file=str(log_raw.get("file", "logs/nas-mcp.log")),
         level=str(log_raw.get("level", "INFO")).upper(),
         max_bytes=_positive_int(log_raw.get("max_bytes"), 5 * 1024 * 1024, "logging.max_bytes"),
         backup_count=_positive_int(log_raw.get("backup_count"), 3, "logging.backup_count"),
     )
+
+
+def load_config(path: str) -> NasConfig:
+    file = Path(path)
+    if not file.is_file():
+        raise ConfigError(
+            f"配置文件不存在: {file}（可用 --config 参数或环境变量 NAS_MCP_CONFIG 指定）",
+            file=str(file),
+            missing=True,
+        )
+    try:
+        text = file.read_text(encoding="utf-8")
+        data = yaml.safe_load(text) or {}
+    except (yaml.YAMLError, OSError) as exc:
+        raise ConfigError(f"配置文件读取/解析失败: {exc}", file=str(file)) from exc
+    return _build_config(data, file, text)
+
+
+def load_config_text(text: str, path_hint: str | Path = "<config>") -> NasConfig:
+    """用与 load_config 完全一致的规则校验配置文本（不落盘）。
+
+    nas_save_config 写盘前调用：校验不通过抛 ConfigError（带 issues），绝不落盘。
+    """
+    file = Path(path_hint)
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(
+            f"配置文件读取/解析失败: {exc}",
+            issues=[
+                ConfigIssue(
+                    key="<yaml>",
+                    message=f"YAML 解析失败: {exc}",
+                    expected="合法 YAML",
+                    severity="error",
+                )
+            ],
+            file=str(file),
+        ) from exc
+    return _build_config(data, file, text)
+
+
+def _build_config(data: Any, file: Path, text: str) -> NasConfig:
+    """收集式校验：一次报多条 issues（上限 MAX_CONFIG_ISSUES），无错才返回配置。"""
+    if not isinstance(data, dict):
+        raise ConfigError(
+            "配置文件顶层必须是键值映射",
+            issues=[
+                ConfigIssue(
+                    key="<root>",
+                    message="配置文件顶层必须是键值映射",
+                    expected="键值映射",
+                    line=1,
+                    column=1,
+                )
+            ],
+            file=str(file),
+        )
+    index = _SourceIndex(text)
+    collector: list[ConfigIssue] = []
+    index_token = _INDEX.set(index)
+    file_token = _CONFIG_FILE.set(str(file))
+    collect_token = _COLLECTOR.set(collector)
+    try:
+        cfg = _load_all(data, file)
+    finally:
+        _COLLECTOR.reset(collect_token)
+        _CONFIG_FILE.reset(file_token)
+        _INDEX.reset(index_token)
+    if collector:
+        detail = "；".join(issue.render() for issue in collector)
+        raise ConfigError(
+            f"配置校验失败（{len(collector)} 项）：{detail}",
+            issues=collector,
+            file=str(file),
+        )
+    return cfg
+
+
+def _load_all(data: dict[str, Any], file: Path) -> NasConfig:
+    # ---- 未知顶层键：拼写错误/废弃键静默忽略会改变实际行为，逐条收集上报 ----
+    for key in sorted(str(k) for k in set(data) - KNOWN_TOP_LEVEL_KEYS):
+        _try(
+            key,
+            lambda k=key: _fail(
+                k,
+                f"未知配置键: {k}",
+                expected="config.example.yaml 中定义的键",
+                actual=k,
+                hint="检查拼写，或该键属于旧版本已废弃字段，删除即可",
+            ),
+            True,
+        )
+
+    # ---- 白名单：必须配置且非空 ----
+    def _allowed():
+        allowed_raw = data.get("allowed_paths")
+        if not isinstance(allowed_raw, list) or not allowed_raw:
+            _fail(
+                "allowed_paths",
+                "allowed_paths 必须是非空列表——没有白名单就不允许启动",
+                expected="非空列表（至少一条绝对路径或 glob）",
+                actual=allowed_raw,
+                hint="只填写实际已授权的目录，例如 [/vol1/1000/move]；不要写整卷 /vol1/1000",
+            )
+        resolved = tuple(dict.fromkeys(_resolve(p, "allowed_paths") for p in allowed_raw))
+        _require_existing(resolved, "allowed_paths")
+        return resolved
+
+    allowed = _try("allowed_paths", _allowed, ())
+
+    # ---- 排除目录 ----
+    def _excluded():
+        exclude_raw = data.get("exclude_paths") or []
+        if not isinstance(exclude_raw, list):
+            _fail(
+                "exclude_paths",
+                "exclude_paths 必须是列表",
+                expected="路径列表",
+                actual=exclude_raw,
+            )
+        return tuple(dict.fromkeys(_resolve(p, "exclude_paths") for p in exclude_raw))
+
+    excluded = _try("exclude_paths", _excluded, ())
+
+    # 排除目录优先于白名单：若整个白名单根被排除，属于配置矛盾，直接拒绝启动。
+    # 模式条目（glob）无法静态判定包含关系，交给 PathGuard 运行时实时裁决。
+    if allowed and excluded:
+        def _conflicts():
+            for a in allowed:
+                for e in excluded:
+                    if is_pattern(a) or is_pattern(e):
+                        continue
+                    if is_within(Path(a), Path(e)):
+                        _fail(
+                            "allowed_paths",
+                            f"白名单目录 {a} 位于排除目录 {e} 之内，配置矛盾",
+                            expected="白名单与排除目录互不包含",
+                            actual=a,
+                            hint="调整 exclude_paths，避免把整个白名单根排除",
+                        )
+            return True
+
+        _try("allowed_paths", _conflicts, True)
+
+    # ---- 搜索范围（默认等于白名单）----
+    def _roots():
+        media_raw = data.get("media_roots")
+        if media_raw is None:
+            return allowed
+        if not isinstance(media_raw, list) or not media_raw:
+            _fail(
+                "media_roots",
+                "media_roots 必须是非空列表（留空请删除该键，默认取 allowed_paths）",
+                expected="非空列表（或删除该键）",
+                actual=media_raw,
+                hint="与 allowed_paths 一起收窄到实际授权目录，如 /vol1/1000/move",
+            )
+        roots = tuple(dict.fromkeys(_resolve(p, "media_roots") for p in media_raw))
+        for m in roots:
+            if is_pattern(m) or any(is_pattern(a) for a in allowed):
+                continue  # 含模式条目时跳过静态包含校验，运行时由 PathGuard 实时裁决
+            if not any(is_within(Path(m), Path(a)) for a in allowed):
+                _fail(
+                    "media_roots",
+                    f"media_roots 中的 {m} 不在 allowed_paths 白名单内",
+                    expected="allowed_paths 内的子目录",
+                    actual=m,
+                )
+        _require_existing(roots, "media_roots")
+        return roots
+
+    media_roots = _try("media_roots", _roots, ()) if allowed else ()
+
+    # ---- 扩展名 ----
+    def _ext_set(key: str, default: tuple[str, ...]) -> frozenset[str]:
+        val = data.get(key, list(default))
+        if not isinstance(val, list):
+            _fail(key, f"{key} 必须是列表", expected="扩展名字符串列表", actual=val)
+        items = frozenset(
+            str(v).lower().lstrip(".").strip() for v in val if str(v).strip()
+        )
+        if not items:
+            _fail(key, f"{key} 不能为空", expected="至少一个扩展名", actual=val)
+        return items
+
+    video_exts = _try(
+        "video_extensions",
+        lambda: _ext_set("video_extensions", DEFAULT_VIDEO_EXTENSIONS),
+        frozenset(DEFAULT_VIDEO_EXTENSIONS),
+    )
+    subtitle_exts = _try(
+        "subtitle_extensions",
+        lambda: _ext_set("subtitle_extensions", DEFAULT_SUBTITLE_EXTENSIONS),
+        frozenset(DEFAULT_SUBTITLE_EXTENSIONS),
+    )
+
+    # ---- 限额 ----
+    lim_raw = data.get("limits") or {}
+    if not isinstance(lim_raw, dict):
+        _try(
+            "limits",
+            lambda: _fail("limits", "limits 必须是映射", expected="键值映射", actual=lim_raw),
+            None,
+        )
+        lim_raw = {}
+    limits = Limits(
+        max_list_entries=_try(
+            "limits.max_list_entries",
+            lambda: _positive_int(
+                lim_raw.get("max_list_entries"), 500, "limits.max_list_entries"
+            ),
+            500,
+        ),
+        max_search_results=_try(
+            "limits.max_search_results",
+            lambda: _positive_int(
+                lim_raw.get("max_search_results"), 100, "limits.max_search_results"
+            ),
+            100,
+        ),
+        max_scan_files=_try(
+            "limits.max_scan_files",
+            lambda: _positive_int(
+                lim_raw.get("max_scan_files"), 100_000, "limits.max_scan_files"
+            ),
+            100_000,
+        ),
+        max_list_depth=_try(
+            "limits.max_list_depth",
+            lambda: _positive_int(
+                lim_raw.get("max_list_depth"), 10, "limits.max_list_depth"
+            ),
+            10,
+        ),
+        max_errors_reported=_try(
+            "limits.max_errors_reported",
+            lambda: _positive_int(
+                lim_raw.get("max_errors_reported"), 20, "limits.max_errors_reported"
+            ),
+            20,
+        ),
+    )
+
+    # ---- 媒体分析（ffprobe） ----
+    media_raw = data.get("media") or {}
+    if not isinstance(media_raw, dict):
+        _try(
+            "media",
+            lambda: _fail("media", "media 必须是映射", expected="键值映射", actual=media_raw),
+            None,
+        )
+        media_raw = {}
+    skip_pats, skip_cats = _try(
+        "media.skip_filename_patterns",
+        lambda: _load_skip_patterns(media_raw),
+        (
+            DEFAULT_SKIP_PATTERNS,
+            tuple((p, DEFAULT_SKIP_PATTERN_CATEGORIES.get(p, "")) for p in DEFAULT_SKIP_PATTERNS),
+        ),
+    )
+    media_cfg = MediaConfig(
+        ffprobe_path=str(media_raw.get("ffprobe_path", "ffprobe")).strip() or "ffprobe",
+        ffprobe_timeout_seconds=_try(
+            "media.ffprobe_timeout_seconds",
+            lambda: _positive_float(
+                media_raw.get("ffprobe_timeout_seconds"), 20.0, "media.ffprobe_timeout_seconds"
+            ),
+            20.0,
+        ),
+        ffmpeg_path=str(media_raw.get("ffmpeg_path", "ffmpeg")).strip() or "ffmpeg",
+        ffmpeg_timeout_seconds=_try(
+            "media.ffmpeg_timeout_seconds",
+            lambda: _positive_float(
+                media_raw.get("ffmpeg_timeout_seconds"), 300.0, "media.ffmpeg_timeout_seconds"
+            ),
+            300.0,
+        ),
+        max_probe_files=_try(
+            "media.max_probe_files",
+            lambda: _positive_int(media_raw.get("max_probe_files"), 200, "media.max_probe_files"),
+            200,
+        ),
+        max_classify_batch=_try(
+            "media.max_classify_batch",
+            lambda: _positive_int(
+                media_raw.get("max_classify_batch"), 20, "media.max_classify_batch"
+            ),
+            20,
+        ),
+        skip_filename_patterns=skip_pats,
+        skip_pattern_categories=skip_cats,
+    )
+    cleanup_cfg = _try("cleanup", lambda: _load_cleanup(data), CleanupConfig())
+
+    # ---- 媒体目录整理（M9：organize_media / find_media） ----
+    organizer_cfg = _try("organizer", lambda: _load_organizer(data, file), OrganizerConfig())
+
+    # ---- SubHD（M4：nas_search_subtitles / nas_download_subtitle） ----
+    subhd_cfg = _try("subhd", lambda: _load_subhd(data), SubhdConfig())
+
+    # ---- OpenSubtitles / Shooter / 字幕编排 ----
+    opensubtitles_cfg = _try(
+        "opensubtitles", lambda: _load_opensubtitles(data), OpensubtitlesConfig()
+    )
+    shooter_cfg = _try("shooter", lambda: _load_shooter(data), ShooterConfig())
+    subtitles_cfg = _try("subtitle", lambda: _load_subtitles(data), SubtitlesConfig())
+
+    # ---- Jackett 资源搜索（P4：jackett_search）与 TMDB 影视识别（P3：resolve_media） ----
+    jackett_cfg = _try("jackett", lambda: _load_jackett(data), JackettConfig())
+    tmdb_cfg = _try("tmdb", lambda: _load_tmdb(data), TmdbConfig())
+    tvmaze_cfg = _try("tvmaze", lambda: _load_tvmaze(data), TvmazeConfig())
+
+    # ---- S4：SeedHub / 网盘资源分享社 / media_search 预算（缺失全走默认值） ----
+    seedhub_cfg = _try("seedhub", lambda: _load_seedhub(data), SeedhubConfig())
+    dysbk_cfg = _try("dysbk", lambda: _load_dysbk(data), DysbkConfig())
+    media_search_cfg = _try(
+        "media_search", lambda: _load_media_search(data), MediaSearchConfig()
+    )
+
+    # ---- 日志 ----
+    logging_cfg = _try("logging", lambda: _load_logging(data), LoggingConfig())
 
     return NasConfig(
         config_path=str(file),
@@ -1093,9 +1624,17 @@ def load_config(path: str) -> NasConfig:
         seedhub=seedhub_cfg,
         dysbk=dysbk_cfg,
         media_search=media_search_cfg,
-        enable_write=_strict_bool(data.get("enable_write"), False, "enable_write"),
-        enable_organize=_strict_bool(data.get("enable_organize"), False, "enable_organize"),
-        enable_delete=_strict_bool(data.get("enable_delete"), False, "enable_delete"),
+        enable_write=_try(
+            "enable_write", lambda: _strict_bool(data.get("enable_write"), False, "enable_write"), False
+        ),
+        enable_organize=_try(
+            "enable_organize",
+            lambda: _strict_bool(data.get("enable_organize"), False, "enable_organize"),
+            False,
+        ),
+        enable_delete=_try(
+            "enable_delete", lambda: _strict_bool(data.get("enable_delete"), False, "enable_delete"), False
+        ),
     )
 
 
