@@ -1,6 +1,6 @@
 # NAS 媒体工具箱 · 独立应用版（备选形态）
 
-> **维护模式说明**：本项目主力形态是 Octop 插件 [nas-octop-plugin](../nas-octop-plugin)；本应用作为备选保留，继续修复缺陷与安全问题时维护，**不再优先扩展新业务工具**。能力内核与插件同源（0.19.17）。
+> **维护模式说明**：本项目主力形态是 Octop 插件 [nas-octop-plugin](../nas-octop-plugin)；本应用作为备选保留，继续修复缺陷与安全问题时维护，**不再优先扩展新业务工具**。能力内核与插件同源（0.19.28）。
 
 把媒体能力包装成一个可独立部署的应用，同时服务 **Web UI** 与 **Octop（MCP）**：
 
@@ -9,7 +9,7 @@
 - **Web UI + HTTP API**：浏览器操作全部工具；长任务转后台队列，避免反向代理超时。
 - **内置 MCP Streamable HTTP**：`127.0.0.1:8670/mcp`，Octop 作为自定义 MCP 直接连接，与 Web UI 共用同一套配置和后台任务，无需另装插件。
 
-核心能力与 Octop 插件 `nas-octop-plugin` 同源（内核 0.19.17），共 **28 个业务工具**；MCP 端点额外提供 `nas_job_status` / `nas_job_list` 两个任务查询工具（共 30 个）。插件版多一个 `nas_save_config`，本应用刻意不开放，配置只在 Web UI / HTTP API 完成。
+核心能力与 Octop 插件 `nas-octop-plugin` 同源（内核 0.19.28），共 **28 个业务工具**；MCP 端点额外提供 `nas_job_status` / `nas_job_list` 两个任务查询工具（共 30 个）。插件版多一个 `nas_save_config`，本应用刻意不开放，配置只在 Web UI / HTTP API 完成。
 
 ### 三种形态怎么选
 

@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
-"""版本单一源校验 + 三副本内核哈希断言。
+"""版本单一源校验 + 三副本内核哈希 + 三形态工具清单/默认值断言。
 
 事实来源：nas-octop-plugin/nas_mcp/__init__.py 的 __version__。
 本脚本只检查、不修改；CI 与打包前都应先跑它。
+
+三形态的边界（允许长期存在、不应硬拉齐）：
+- 插件比 nas-app 多 ``nas_save_config``（插件在 Octop 里没有 UI，只能靠工具写配置）；
+- nas-app 有 Web UI、任务队列/进度/取消，插件是同步调用；
+- nas-mcp 是只读 stdio 形态，少 5 个治理工具，字幕两工具用 subtitle_* 命名。
+除此之外的“同名工具缺失”或“关键默认值不同”都会让本脚本失败。
 
 用法：
     python scripts/check_versions.py
 """
 from __future__ import annotations
 
+import ast
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -20,6 +28,58 @@ APP = ROOT / "nas-app"
 MCP = ROOT / "nas-mcp"
 
 SOURCE = PLUGIN / "nas_mcp" / "__init__.py"
+PLUGIN_MAIN = PLUGIN / "main.py"
+APP_TOOLKIT = APP / "nas_app" / "toolkit.py"
+MCP_SERVER = MCP / "src" / "nas_mcp" / "server.py"
+# 打包时由 scripts/build_core_manifest.py 生成，随安装包分发
+CORE_MANIFEST = PLUGIN / "core_manifest.json"
+
+# 形态差异白名单：这些不是“没同步”，而是装配形态决定的能力边界。
+# 插件侧配置写入、队列管理与日志读取只存在于 Octop 插件装配层。
+PLUGIN_ONLY_TOOLS = {
+    "nas_save_config",
+    "nas_job_list",
+    "nas_job_status",
+    "nas_job_cancel",
+    "nas_doctor",
+    "nas_get_logs",
+}
+MCP_MISSING_TOOLS = {
+    "media_missing_episodes",
+    "media_integrity_check",
+    "media_cleanup",
+    "media_rollback",
+    "media_fill_subtitles",
+}
+MCP_RENAMED_TOOLS = {
+    "subhd_search": "subtitle_search",
+    "subhd_download": "subtitle_download",
+}
+
+# 同名工具的关键默认值：三个形态必须一致，防止“插件默认不动文件、某个形态默认动文件”。
+KEY_DEFAULTS: dict[str, dict[str, object]] = {
+    "media_mux_subtitles": {
+        "dry_run": True,
+        "delete_external": False,
+        "replace_original": False,
+        "force": False,
+        "limit": 50,
+    },
+    "media_cleanup": {"dry_run": True},
+    "organize_media": {
+        "dry_run": True,
+        "preexisting_empty_scope": "library_root",
+        "language_split": False,
+    },
+    "media_fill_subtitles": {
+        "dry_run": True,
+        "lang": "zh-Hans",
+        "ext": "srt",
+        "check_embedded": True,
+    },
+    "subhd_download": {"lang": "zh-Hans", "ext": "srt", "overwrite": False},
+    "subtitle_download": {"lang": "zh-Hans", "ext": "srt", "overwrite": False},
+}
 
 
 def source_version() -> str:
@@ -31,6 +91,204 @@ def source_version() -> str:
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _parse(path: Path) -> ast.AST:
+    return ast.parse(read(path), filename=str(path))
+
+
+def _const_str(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _plugin_tools(tree: ast.AST) -> set[str]:
+    """插件在 setup 里用 ctx.tool(...) + (name, fn) 元组循环注册工具。"""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "tool" and node.args:
+                value = _const_str(node.args[0])
+                if value:
+                    names.add(value)
+        if isinstance(node, ast.For) and isinstance(node.target, ast.Tuple):
+            targets = [n.id for n in node.target.elts if isinstance(n, ast.Name)]
+            if targets[:2] == ["_name", "_fn"] and isinstance(node.iter, ast.Tuple):
+                for item in node.iter.elts:
+                    if isinstance(item, ast.Tuple) and item.elts:
+                        value = _const_str(item.elts[0])
+                        if value:
+                            names.add(value)
+    return names
+
+
+def _decorated_tools(tree: ast.AST, attr: str, use_func_name: bool = False) -> set[str]:
+    """nas-app 用 @self.tool("name", ...)，nas-mcp 用 @mcp.tool() + 函数名。"""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+            func = decorator.func
+            if not (isinstance(func, ast.Attribute) and func.attr == attr):
+                continue
+            if use_func_name:
+                names.add(node.name)
+            elif decorator.args:
+                value = _const_str(decorator.args[0])
+                if value:
+                    names.add(value)
+    return names
+
+
+def _function_defaults(tree: ast.AST) -> dict[str, dict[str, object]]:
+    """提取每个函数的参数默认值，用于跨形态比对。"""
+    out: dict[str, dict[str, object]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        spec = node.args
+        positional = [*spec.posonlyargs, *spec.args]
+        defaults: list[object] = [None] * (len(positional) - len(spec.defaults)) + list(spec.defaults)
+        values: dict[str, object] = {}
+        for arg, default in zip(positional, defaults):
+            if default is not None:
+                try:
+                    values[arg.arg] = ast.literal_eval(default)
+                except (ValueError, SyntaxError):
+                    pass
+        for arg, default in zip(spec.kwonlyargs, spec.kw_defaults):
+            if default is not None:
+                try:
+                    values[arg.arg] = ast.literal_eval(default)
+                except (ValueError, SyntaxError):
+                    pass
+        out[node.name] = values
+    return out
+
+
+def check_tool_parity() -> list[str]:
+    """工具清单 + 关键默认值一致性；返回失败项列表。"""
+    failures: list[str] = []
+    plugin_tools = _plugin_tools(_parse(PLUGIN_MAIN))
+    app_tools = _decorated_tools(_parse(APP_TOOLKIT), "tool")
+    mcp_tools = _decorated_tools(_parse(MCP_SERVER), "tool", use_func_name=True)
+
+    if plugin_tools - PLUGIN_ONLY_TOOLS != app_tools:
+        failures.append(
+            "插件与 nas-app 工具集不一致："
+            f"仅插件={sorted(plugin_tools - PLUGIN_ONLY_TOOLS - app_tools)}，"
+            f"仅 app={sorted(app_tools - plugin_tools)}"
+        )
+    else:
+        print(f"[PASS] 插件/ nas-app 工具集对齐：{len(app_tools)} 个业务工具（插件多 nas_save_config）")
+
+    expected_mcp = (
+        plugin_tools - PLUGIN_ONLY_TOOLS - MCP_MISSING_TOOLS - set(MCP_RENAMED_TOOLS)
+    ) | set(MCP_RENAMED_TOOLS.values())
+    if mcp_tools != expected_mcp:
+        failures.append(
+            "nas-mcp 工具集偏离约定："
+            f"多={sorted(mcp_tools - expected_mcp)}，"
+            f"缺={sorted(expected_mcp - mcp_tools)}"
+        )
+    else:
+        print(f"[PASS] nas-mcp 工具集符合约定：{len(mcp_tools)} 个（少 5 个治理工具 + 2 个 subtitle_* 改名）")
+
+    default_maps = {
+        "插件": (plugin_tools, _function_defaults(_parse(PLUGIN_MAIN))),
+        "nas-app": (app_tools, _function_defaults(_parse(APP_TOOLKIT))),
+        "nas-mcp": (mcp_tools, _function_defaults(_parse(MCP_SERVER))),
+    }
+    mismatches: list[str] = []
+    for tool, expected in KEY_DEFAULTS.items():
+        for label, (registered, defaults) in default_maps.items():
+            if tool not in registered:
+                continue
+            actual = defaults.get(tool, {})
+            for param, value in expected.items():
+                if param not in actual:
+                    mismatches.append(f"{label}/{tool}: 缺少参数 {param}")
+                elif actual[param] != value:
+                    mismatches.append(f"{label}/{tool}.{param}={actual[param]!r}，应为 {value!r}")
+    if mismatches:
+        failures.extend(mismatches)
+    else:
+        print("[PASS] 三形态关键默认值一致（dry_run/覆盖/替换/分语言/limit）")
+    return failures
+
+
+def check_core_manifest(version: str) -> list[str]:
+    """core_manifest.json 必须与源码一致：版本 + nas_mcp 哈希 + 三形态工具清单。"""
+    failures: list[str] = []
+    if not CORE_MANIFEST.is_file():
+        return [
+            f"core_manifest.json 不存在：{CORE_MANIFEST}"
+            "（请运行 scripts/build_core_manifest.py 生成）"
+        ]
+    try:
+        manifest = json.loads(read(CORE_MANIFEST))
+    except ValueError as exc:
+        return [f"core_manifest.json 解析失败：{exc}"]
+    if not isinstance(manifest, dict):
+        return ["core_manifest.json 顶层不是对象"]
+
+    if manifest.get("version") != version:
+        failures.append(
+            f"core_manifest 版本 {manifest.get('version')!r} 与源码 {version} 不一致"
+            "（改动内核后请重新生成）"
+        )
+
+    core = manifest.get("nas_mcp")
+    recorded = core.get("files") if isinstance(core, dict) else None
+    if not isinstance(recorded, dict):
+        failures.append("core_manifest 缺少 nas_mcp.files")
+        recorded = {}
+    actual = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted((PLUGIN / "nas_mcp").glob("*.py"))
+    }
+    if set(recorded) != set(actual):
+        failures.append(
+            "core_manifest 文件清单不一致："
+            f"多={sorted(set(recorded) - set(actual))}，"
+            f"缺={sorted(set(actual) - set(recorded))}"
+        )
+    for name in sorted(set(recorded) & set(actual)):
+        if recorded[name] != actual[name]:
+            failures.append(f"core_manifest 哈希不一致（源文件被篡改？）: {name}")
+    digest = hashlib.sha256(
+        "".join(f"{name}:{digest}\n" for name, digest in sorted(actual.items())).encode("utf-8")
+    ).hexdigest()
+    if core.get("digest") != digest:
+        failures.append(
+            f"core_manifest 汇总 digest 不一致：{core.get('digest')} != {digest}"
+        )
+
+    plugin_tools = _plugin_tools(_parse(PLUGIN_MAIN))
+    app_tools = _decorated_tools(_parse(APP_TOOLKIT), "tool")
+    mcp_tools = _decorated_tools(_parse(MCP_SERVER), "tool", use_func_name=True)
+    expected = {
+        "plugin": sorted(plugin_tools),
+        "plugin_only": sorted(plugin_tools - app_tools),
+        "nas_app": sorted(app_tools),
+        "nas_mcp": sorted(mcp_tools),
+    }
+    tools = manifest.get("tools")
+    if not isinstance(tools, dict):
+        failures.append("core_manifest 缺少 tools")
+        tools = {}
+    for key, names in expected.items():
+        recorded_names = tools.get(key)
+        if not isinstance(recorded_names, list):
+            failures.append(f"core_manifest 缺少 tools.{key}")
+        elif sorted(recorded_names) != names:
+            failures.append(f"core_manifest tools.{key} 与源码不一致")
+    return failures
 
 
 def main() -> int:
@@ -92,6 +350,22 @@ def main() -> int:
             if len(set(digests.values())) != 1:
                 failures.append(f"内核文件哈希不一致: {name} -> {digests}")
         print(f"[PASS] 三副本 {len(common)} 个 .py 哈希一致")
+
+    # 4. 三形态工具清单 + 关键默认值（防止新增能力只落一个形态）
+    try:
+        failures.extend(check_tool_parity())
+    except Exception as exc:  # noqa: BLE001 - 解析失败本身就是不同步
+        failures.append(f"三形态工具清单校验异常: {exc}")
+
+    # 5. 打包清单 core_manifest.json 与源码一致（篡改/漏更新必须失败）
+    try:
+        manifest_failures = check_core_manifest(version)
+    except Exception as exc:  # noqa: BLE001
+        manifest_failures = [f"core_manifest 校验异常: {exc}"]
+    if manifest_failures:
+        failures.extend(manifest_failures)
+    else:
+        print("[PASS] core_manifest.json 与源码一致（版本/sha256/三形态工具清单）")
 
     print()
     if failures:

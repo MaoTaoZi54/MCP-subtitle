@@ -1,6 +1,6 @@
 [project]
 name = "nas-app"
-version = "0.19.17"
+version = "0.19.28"
 description = "NAS 媒体工具箱 · 独立应用版（Web UI + HTTP API + MCP Streamable HTTP，飞牛应用商店 / Docker）"
 requires-python = ">=3.10"
 dependencies = [

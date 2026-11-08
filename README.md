@@ -1,10 +1,10 @@
 # MCP-subtitle · NAS 媒体工具箱
 
-**主力形态是 Octop 插件** [nas-octop-plugin](nas-octop-plugin)；[nas-app](nas-app) 与 [nas-mcp](nas-mcp) 作为备选保留。三种交付形态共享同一份媒体能力内核 **0.19.17**（扫描/字幕/资源搜索/整理），装配层能力分工如下：
+**主力形态是 Octop 插件** [nas-octop-plugin](nas-octop-plugin)；[nas-app](nas-app) 与 [nas-mcp](nas-mcp) 作为备选保留。三种交付形态共享同一份媒体能力内核 **0.19.28**（扫描/字幕/资源搜索/整理），装配层能力分工如下：
 
 | 子项目 | 形态 | 说明 |
 | --- | --- | --- |
-| [nas-octop-plugin](nas-octop-plugin) | Octop 进程内插件 | **29 个工具**（28 业务 + `nas_save_config`），配置可用对话/表单/编辑 config.yaml |
+| [nas-octop-plugin](nas-octop-plugin) | Octop 进程内插件 | **34 个工具**（28 业务 + `nas_save_config` + `nas_doctor` + `nas_get_logs` + 3 个 `nas_job_*`），配置可用对话/表单/编辑 config.yaml |
 | [nas-mcp](nas-mcp) | 独立 stdio MCP 服务 | **当前 23 个工具**，stdio 装配层覆盖主流媒体/字幕/搜索能力（比插件少 5 个业务工具：缺集检测、完整性检查、清理、回滚、批量补字幕，另无 `nas_save_config`） |
 | [nas-app](nas-app) | 独立应用 | **28 个业务工具**；8669 提供 Web UI + HTTP API，8670 内置 MCP Streamable HTTP；支持 **Docker** 与 **飞牛 fnOS 应用商店（.fpk）** |
 
