@@ -283,15 +283,26 @@ SeedHub 站内搜索（磁力 + 网盘入口）。依赖 `curl_cffi`，懒加载
 
 8 项检查：`operation_id_exists`、`action_supported`、`source_target_exists`、`path_allowed`、`conflict`、`permission`、`size`、`mtime`。批内任一冲突 → **整体中止**（不做部分回滚）。默认 `dry_run`。
 
-## 9. 任务组（仅 nas-app MCP 端点）
+## 9. 任务组（nas-app MCP 端点 + Octop 插件）
 
 ### `nas_job_status(job_id)`
 
-查询任务状态：`queued / running / succeeded / failed`，含 `result` / `error` / `duration_ms`。
+查询任务状态：`queued / running / succeeded / failed / canceled / interrupted`，含 `result` / `error` / `duration_ms` / `progress`。
+`interrupted` 是独立终态：插件进程重启后未完成任务恢复为此状态，并带 `error.code=interrupted`。
 
 ### `nas_job_list(limit=20)`
 
-列出最近任务。
+列出最近任务（最多 100 条，列表不内联完整结果）。
+
+### `nas_job_cancel(job_id)`（插件专属）
+
+合作式取消：排队任务立即结束；运行中任务在工具循环边界停下，返回已完成部分
+（`result.canceled/partial=true`），并清理混流临时文件 `.<stem>.mux_tmp.mkv`。
+
+插件侧 6 个长工具（`nas_scan_media` / `media_integrity_check` / `media_cleanup` /
+`media_fill_subtitles` / `media_mux_subtitles` / `organize_media`）支持可选
+`background=true`：立即返回 `job_id`，不传时保持同步调用行为。队列落盘在
+`$OCTOP_DATA_DIR/nas-media/jobs/`，2 个 worker、写类任务共用一把写锁、待处理上限 20、保留最近 100 个或 7 天。
 
 ## 10. 典型工作流
 
