@@ -1,0 +1,5 @@
+# fnOS 打包目录必须在工作区就是 LF：manifest、image.conf 与 cmd 脚本
+# 若被 core.autocrlf 转成 CRLF，安装脚本 source image.conf 时 IMAGE 会带上 \r。
+nas-app/packaging/fnos/** text=auto eol=lf
+nas-app/packaging/fnos/**/*.PNG binary
+nas-app/packaging/fnos/**/*.png binary

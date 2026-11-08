@@ -11,9 +11,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd ../.. && pwd)"
-VERSION="$(sed -n 's/^version=//p' manifest | head -1)"
-APPNAME="$(sed -n 's/^appname=//p' manifest | head -1)"
-IMAGE="$(sed -n 's/^IMAGE=//p' app/docker/image.conf | head -1)"
+# Windows 挂载目录下 manifest/image.conf 为 CRLF，需去掉 sed 带出的 \r
+VERSION="$(sed -n 's/^version=//p' manifest | head -1 | tr -d '\r')"
+APPNAME="$(sed -n 's/^appname=//p' manifest | head -1 | tr -d '\r')"
+IMAGE="$(sed -n 's/^IMAGE=//p' app/docker/image.conf | head -1 | tr -d '\r')"
 WITH_IMAGE=0
 PUSH_IMAGE=0
 
