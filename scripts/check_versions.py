@@ -7,7 +7,7 @@
 三形态的边界（允许长期存在、不应硬拉齐）：
 - 插件比 nas-app 多 ``nas_save_config``（插件在 Octop 里没有 UI，只能靠工具写配置）；
 - nas-app 有 Web UI、任务队列/进度/取消，插件是同步调用；
-- nas-mcp 是只读 stdio 形态，少 5 个治理工具，字幕两工具用 subtitle_* 命名。
+- nas-mcp 是 stdio 形态，业务工具与 app 完全一致，仅字幕两工具用 subtitle_* 命名。
 除此之外的“同名工具缺失”或“关键默认值不同”都会让本脚本失败。
 
 用法：
@@ -44,13 +44,8 @@ PLUGIN_ONLY_TOOLS = {
     "nas_doctor",
     "nas_get_logs",
 }
-MCP_MISSING_TOOLS = {
-    "media_missing_episodes",
-    "media_integrity_check",
-    "media_cleanup",
-    "media_rollback",
-    "media_fill_subtitles",
-}
+# nas-mcp 已补齐全部业务工具；保留空集合便于未来按形态收窄时继续复用比对逻辑。
+MCP_MISSING_TOOLS: set[str] = set()
 MCP_RENAMED_TOOLS = {
     "subhd_search": "subtitle_search",
     "subhd_download": "subtitle_download",
@@ -197,7 +192,7 @@ def check_tool_parity() -> list[str]:
             f"缺={sorted(expected_mcp - mcp_tools)}"
         )
     else:
-        print(f"[PASS] nas-mcp 工具集符合约定：{len(mcp_tools)} 个（少 5 个治理工具 + 2 个 subtitle_* 改名）")
+        print(f"[PASS] nas-mcp 工具集符合约定：{len(mcp_tools)} 个（业务工具齐全 + 2 个 subtitle_* 改名）")
 
     default_maps = {
         "插件": (plugin_tools, _function_defaults(_parse(PLUGIN_MAIN))),

@@ -13,21 +13,26 @@ import functools
 import logging
 import time
 from dataclasses import asdict
+from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
 from . import __version__
+from . import cleanup as cleanup_tools
 from . import disk as disk_tools
 from . import dysbk as dysbk_tools
 from . import federated as federated_tools
 from . import fs as fs_tools
+from . import integrity as integrity_tools
 from . import jackett as jackett_tools
 from . import library as library_tools
 from . import media as media_tools
+from . import missing as missing_tools
 from . import mux as mux_tools
 from . import organizer as organizer_tools
 from . import region as region_tools
 from . import resolver as resolver_tools
+from . import rollback as rollback_tools
 from . import seedhub as seedhub_tools
 from . import subhd as subhd_tools
 from . import subtitle as subtitle_orchestrator
@@ -172,7 +177,13 @@ def create_server(cfg: NasConfig) -> MCPServer:
             "逐项审阅 move/identical/conflict/blocked 后再 dry_run=false 执行"
             "（执行需 enable_organize=true）；identical 去重与空目录清理属删除类，"
             "需 enable_delete=true，未开启时只报告 level3_pending；执行全部写审计日志。"
-            "找片定位用 find_media(title, season, episode)。"
+            "找片定位用 find_media(title, season, episode)。\n"
+            "9. 库治理补全：media_missing_episodes 只按 TMDB 官方集数判断缺集"
+            "（expected=null 表示基线不可用，不得用本地最大集数推断）；"
+            "media_integrity_check 用 basic/deep 查文件完整性；"
+            "media_cleanup 默认 dry_run 只出分类计划，真删需 enable_delete=true；"
+            "media_rollback 只能按 operation_id 回滚，不接受 source/target；"
+            "media_fill_subtitles 按{剧,季}批量补字幕，默认 dry_run 只出计划。"
         ),
     )
 
@@ -483,6 +494,126 @@ def create_server(cfg: NasConfig) -> MCPServer:
 
     @mcp.tool()
     @_safe_tool
+    def media_missing_episodes(
+        title: str = "",
+        season: int | None = None,
+        path: str = "",
+        paths: list[str] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        """检测电视剧缺失的集数（只读，以 TMDB 官方集数为基线）。
+
+        expected 集数列表只来自 TMDB tv season endpoint，绝不用本地最大集数推断。
+        TMDB 不可用 / 查询失败 / 标题歧义 → expected=null, missing=null,
+        reason="expected_episode_set_unavailable"；标题歧义时
+        title_resolution="ambiguous"，不猜测。Season 0（Specials）默认不参与，
+        显式 season=0 才检查。权限错误只进 errors，绝不当 missing。
+
+        Args:
+            title: 电视剧名；留空扫描全部可识别电视剧
+            season: 季号（>=0）；留空检查本地出现的所有季；0 检查 Specials
+            path: 待检查目录或单个文件；留空且无 paths 时扫全部 media_roots
+            paths: 显式视频文件列表；与 path 二选一
+            limit: 单页最多返回剧数（扫剧模式）/ 项数
+            offset: 分页偏移
+        """
+        return missing_tools.missing_episodes(
+            guard, cfg.limits, cfg.video_extensions, cfg.subtitle_extensions,
+            cfg.media_roots, cfg.media, cfg.tmdb, tvcfg=cfg.tvmaze,
+            title=title, season=season, path=path, paths=paths,
+            limit=limit, offset=offset,
+        )
+
+    @mcp.tool()
+    @_safe_tool
+    def media_integrity_check(
+        path: str = "",
+        paths: list[str] | None = None,
+        mode: str = "basic",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        """检查媒体文件完整性（只读，basic/deep 两种模式）。
+
+        basic：文件存在/可读/容器/视频流；deep：更深 probe（无音轨/时长异常等
+        → warning），遵守 media.max_probe_files 预算。状态仅 healthy/warning/
+        corrupted/incomplete/unknown；权限错误只进 errors，不当 corrupted。
+        probe 预算耗尽 → truncated=true、对应项 reason="probe_budget_exhausted"。
+
+        Args:
+            path: 待检查目录或单个文件；留空且无 paths 时扫全部 media_roots
+            paths: 显式视频文件列表；与 path 二选一
+            mode: basic（默认）或 deep
+            limit: 单页最多检查文件数
+            offset: 分页偏移
+        """
+        return integrity_tools.integrity_check(
+            guard, cfg.limits, cfg.video_extensions, cfg.subtitle_extensions,
+            cfg.media_roots, cfg.media, path=path, paths=paths, mode=mode,
+            limit=limit, offset=offset,
+        )
+
+    @mcp.tool()
+    @_safe_tool
+    def media_cleanup(
+        path: str = "",
+        files: list[str] | None = None,
+        dry_run: bool = True,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        """扫描/指定媒体文件，给出垃圾清理分类计划；默认 dry_run，真删需五重门。
+
+        四类分类：media / media_junk / personal_video / unknown。复用
+        skip_filename_patterns 与 organizer 的 special_dir_names；空目录不属本
+        工具职责。每个计划项带 path/size/mtime_age/classification/matched_pattern/
+        protection_reason/cleanup_allowed/action 证据字段。
+        永久删除五重门（缺一不可）：classification=media_junk、cleanup_allowed、
+        enable_delete=true、dry_run=false、PathGuard 通过；删除不可回滚
+        （审计记录 rollback_unsupported）。files 显式清单只改目标选取，不改删除
+        资格；任一条目越界整体 path_not_allowed，不部分执行。
+
+        Args:
+            path: 扫描目录（留空扫全部 media_roots）；须在白名单与 media_roots 内
+            files: 显式文件清单（与 path 二选一）
+            dry_run: true（默认）只返回计划不改文件；false 才执行删除
+            limit: 单页最多返回计划项数
+            offset: 分页偏移
+        """
+        return cleanup_tools.cleanup(
+            guard, cfg.limits, cfg.video_extensions, cfg.subtitle_extensions,
+            cfg.media_roots, cfg.media, cfg.cleanup, cfg.organizer,
+            enable_delete=cfg.enable_delete, path=path, files=files,
+            dry_run=dry_run, limit=limit, offset=offset,
+        )
+
+    @mcp.tool()
+    @_safe_tool
+    def media_rollback(operation_id: str = "", dry_run: bool = True) -> dict:
+        """按 operation_id 回滚一次写操作（move/rename/create），默认只检查。
+
+        只接受 operation_id，不得传入 source/target 要求回滚；ID 来自
+        organize_media / subtitle_download / media_cleanup 的执行返回值。
+        状态：rollback_ready / rolled_back / rollback_conflict /
+        rollback_unsupported / not_found / permission_denied / failed /
+        partially_rolled_back。批量先检查全部项目，任一冲突 → 执行前整体中止，
+        绝不部分回滚。权限：move/rename 回滚需 enable_organize=true；
+        create 回滚（删除新建字幕）需 enable_delete=true。
+        dry_run=true（默认）只检查返回 rollback_ready，不改文件。
+
+        Args:
+            operation_id: 操作 ID（必填，如 OP-20261009-K3M7P）
+            dry_run: true（默认）只做安全检查；false 才执行实际回滚
+        """
+        return rollback_tools.rollback(
+            guard, cfg.organizer, enable_organize=cfg.enable_organize,
+            enable_delete=cfg.enable_delete, operation_id=operation_id,
+            dry_run=dry_run,
+        )
+
+    @mcp.tool()
+    @_safe_tool
     def subtitle_search(video_path: str = "", keyword: str = "") -> dict:
         """在多站点搜索字幕候选（只读网络搜索，不落盘）。
 
@@ -529,10 +660,85 @@ def create_server(cfg: NasConfig) -> MCPServer:
             ext: 写入文件名的字幕扩展名（默认 srt）
             overwrite: 目标文件已存在时是否覆盖（默认否）
         """
-        return subtitle_orchestrator.download_subtitle(
+        result = subtitle_orchestrator.download_subtitle(
             guard, cfg, cfg.subtitle_extensions, cfg.enable_write,
             video_path=video_path, sid=sid, lang=lang, ext=ext, overwrite=overwrite,
         )
+        if result.get("ok"):
+            # 与插件/app 同口径：字幕落盘写 CREATE 审计并返回 operation_id，
+            # 供 media_rollback 按 create 回滚。
+            try:
+                sp = Path(str(result.get("subtitle_path") or ""))
+                st = sp.stat()
+                oid = organizer_tools.new_operation_id(cfg.organizer)
+                organizer_tools._audit(
+                    cfg.organizer, action="CREATE",
+                    source=str(result.get("video_path") or ""), target=str(sp),
+                    result="SUCCESS", operation_id=oid,
+                    size=st.st_size, mtime=st.st_mtime_ns,
+                )
+                result["operation_id"] = oid
+            except OSError as exc:
+                result["operation_id"] = None
+                logger.warning("字幕创建审计写入失败: %s", exc)
+        return result
+
+    @mcp.tool()
+    @_safe_tool
+    def media_fill_subtitles(
+        path: str = "",
+        dry_run: bool = True,
+        lang: str = "zh-Hans",
+        ext: str = "srt",
+        check_embedded: bool = True,
+        budget_seconds: float = 0.0,
+    ) -> dict:
+        """批量补全缺失中文字幕（按{剧,季}聚合，整季包优先、单集降级；默认 dry_run）。
+
+        扫描（外挂口径 probe=false）按 {剧, 季} 聚合出 missing/total 后分档：
+        missing ≥ max(subtitles.season_pack_threshold, 50%×季总集数) 走整季包
+        路径，否则走单集路径。包不全/失败 → 剩余集降级单集；幂等：写盘前检查
+        同目录已有中文字幕与目标文件。逐季返回 {title, season, strategy,
+        pack_sid, filled[], fallback[], failed[], skipped[]}；每个落盘文件写入
+        CREATE 审计并返回 operation_id（供 media_rollback 按 create 回滚）。
+        dry_run=true（默认）只出计划与分档，不发起网络请求、不写文件；
+        dry_run=false 落盘需 enable_write=true。
+
+        Args:
+            path: 扫描目录（留空扫全部 media_roots）；须在白名单与 media_roots 内
+            dry_run: true（默认）只返回计划不下载；false 才实际补全
+            lang: 字幕文件名语言标签（默认 zh-Hans）
+            ext: 字幕扩展名（默认 srt）
+            check_embedded: 是否检查内嵌中文字幕（扫描仍按外挂口径）
+            budget_seconds: wall-clock 预算秒数（0=不限）；超时后剩余季标记
+                reason=budget_exhausted 并返回已完成部分
+        """
+        result = subtitle_orchestrator.fill_missing_subtitles(
+            guard, cfg, cfg.subtitle_extensions, cfg.enable_write,
+            path=path, dry_run=dry_run, lang=lang, ext=ext,
+            check_embedded=check_embedded, budget_seconds=budget_seconds,
+        )
+        if result.get("ok") and not dry_run:
+            # 与插件/app 同口径：每个落盘字幕写 CREATE 审计并返回 operation_id。
+            for season in result.get("seasons", []):
+                for item in season.get("filled", []):
+                    if not item.get("subtitle_path"):
+                        continue
+                    try:
+                        sp = Path(str(item["subtitle_path"]))
+                        st = sp.stat()
+                        oid = organizer_tools.new_operation_id(cfg.organizer)
+                        organizer_tools._audit(
+                            cfg.organizer, action="CREATE",
+                            source=str(item.get("video_path") or ""), target=str(sp),
+                            result="SUCCESS", operation_id=oid,
+                            size=st.st_size, mtime=st.st_mtime_ns,
+                        )
+                        item["operation_id"] = oid
+                    except OSError as exc:
+                        item["operation_id"] = None
+                        logger.warning("字幕创建审计写入失败: %s", exc)
+        return result
 
     @mcp.tool()
     @_safe_tool

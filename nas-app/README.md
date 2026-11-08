@@ -1,6 +1,6 @@
 # NAS 媒体工具箱 · 独立应用版（备选形态）
 
-> **维护模式说明**：本项目主力形态是 Octop 插件 [nas-octop-plugin](../nas-octop-plugin)；本应用作为备选保留，继续修复缺陷与安全问题时维护，**不再优先扩展新业务工具**。能力内核与插件同源（0.19.28）。
+> **维护模式说明**：本项目主力形态是 Octop 插件 [nas-octop-plugin](../nas-octop-plugin)；本应用作为备选保留，继续修复缺陷与安全问题时维护，**不再优先扩展新业务工具**。能力内核与插件同源（0.19.29）。
 
 把媒体能力包装成一个可独立部署的应用，同时服务 **Web UI** 与 **Octop（MCP）**：
 
@@ -9,7 +9,7 @@
 - **Web UI + HTTP API**：浏览器操作全部工具；长任务转后台队列，避免反向代理超时。
 - **内置 MCP Streamable HTTP**：`127.0.0.1:8670/mcp`，Octop 作为自定义 MCP 直接连接，与 Web UI 共用同一套配置和后台任务，无需另装插件。
 
-核心能力与 Octop 插件 `nas-octop-plugin` 同源（内核 0.19.28），共 **28 个业务工具**；MCP 端点额外提供 `nas_job_status` / `nas_job_list` 两个任务查询工具（共 30 个）。插件版多一个 `nas_save_config`，本应用刻意不开放，配置只在 Web UI / HTTP API 完成。
+核心能力与 Octop 插件 `nas-octop-plugin` 同源（内核 0.19.29），共 **28 个业务工具**；MCP 端点额外提供 `nas_job_status` / `nas_job_list` 两个任务查询工具（共 30 个）。插件版多一个 `nas_save_config`，本应用刻意不开放，配置只在 Web UI / HTTP API 完成。
 
 ### 三种形态怎么选
 
@@ -231,9 +231,9 @@ python scripts/make_icons.py
 
 ## 已知限制
 
-- 开发机（Windows）未安装 Docker/fnpack/ffmpeg；镜像构建、`fnpack` 打包与容器内 MCP 此前已在飞牛 fnOS 实机验证，本轮版本号统一到 0.19.0 后仍建议在目标机型复测授权目录与端口占用场景。
+- 开发机（Windows）未安装 Docker/fnpack/ffmpeg；镜像构建、`fnpack` 打包与容器内 MCP 此前已在飞牛 fnOS 实机验证，本轮版本号统一到 0.19.29 后仍建议在目标机型复测授权目录与端口占用场景。
 - fnOS 安装方式使用 Docker 运行；首次安装必须先在 fnOS 中授权媒体目录，否则容器不会启动。
 - 扫描画质/编码依赖 ffprobe：Docker 镜像已内置 ffmpeg，直接运行 Python 时需自备。
 - SeedHub 的 Cloudflare 校验依赖 `curl_cffi`；缺失时仅 `seedhub_*` 工具降级，其他功能不受影响。
 - 内置 MCP 依赖 `mcp==1.28.1`，镜像体积因此增加（pydantic/starlette/uvicorn 等）；`mcp` 缺失或 8670 被占用时 MCP 不启动，Web UI 照常运行。
-- `nas-mcp`（stdio 版）提供 **23 个工具**，与插件/本应用的 28 个业务工具仍有差距（整理、清理、混流、回滚等未纳入 stdio 装配），详见根 README。
+- `nas-mcp`（stdio 版）提供 **28 个业务工具**，与插件/本应用的业务面一致（字幕两工具为 `subtitle_*`），仅缺插件专属的配置/任务/日志/诊断工具，详见根 README。

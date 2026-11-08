@@ -9,7 +9,7 @@
 - 本应用：HTTP API + Web UI + MCP Streamable HTTP。
 """
 
-__version__ = "0.19.28"
+__version__ = "0.19.29"
 
 APP_NAME = "nas-app"
 APP_DISPLAY_NAME = "NAS 媒体工具箱"
