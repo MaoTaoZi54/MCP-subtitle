@@ -19,4 +19,8 @@ ensure_image || {
   log_error "镜像 $IMAGE 拉取失败。请确认设备能访问镜像仓库，或安装包含离线镜像的版本。"
   exit 1
 }
+
+if ! collect_paths; then
+  log_error "安装已完成，但未检测到可用的媒体库目录。请立即到「应用设置 → 授权目录」授权，否则应用无法启动。"
+fi
 exit 0

@@ -18,6 +18,58 @@ umask 077
 printf '%s' "$token" > "$ETC/token"
 chmod 600 "$ETC/token" 2>/dev/null || true
 
+# 安装向导里填写的媒体库目录（英文冒号分隔），写入 extra_paths 供 common.sh 读取
+media_paths="${wizard_media_paths:-}"
+if [ -z "$media_paths" ]; then
+  log_error "未填写媒体库目录。请返回上一步填写已存在的绝对路径（如 /vol1/1000/media），或安装后到「应用设置 → 授权目录」授权；授权前应用无法启动。"
+  exit 1
+fi
+
+tmp_paths="$ETC/extra_paths.tmp"
+: > "$tmp_paths"
+IFS=':' read -ra media_path_list <<< "$media_paths"
+seen=" "
+invalid=0
+for raw in "${media_path_list[@]}"; do
+  path="${raw%/}"
+  [ -n "$path" ] || path="/"
+  case "$path" in
+    /proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/)
+      log_error "媒体库目录不能是系统目录：$path"
+      invalid=1
+      continue
+      ;;
+    /*) ;;
+    *)
+      log_error "媒体库目录必须以 / 开头：$raw"
+      invalid=1
+      continue
+      ;;
+  esac
+  if [ ! -d "$path" ]; then
+    log_error "媒体库目录不存在：$path。请返回上一步修改，或先创建该目录。"
+    invalid=1
+    continue
+  fi
+  case "$seen" in
+    *" $path "*) continue ;;
+  esac
+  seen="$seen$path "
+  printf '%s\n' "$path" >> "$tmp_paths"
+done
+if [ "$invalid" -ne 0 ]; then
+  rm -f "$tmp_paths"
+  exit 1
+fi
+if [ ! -s "$tmp_paths" ]; then
+  rm -f "$tmp_paths"
+  log_error "没有可用的媒体库目录，安装已中止。请在向导中填写至少一个已存在的绝对路径。"
+  exit 1
+fi
+umask 022
+mv "$tmp_paths" "$ETC/extra_paths"
+chmod 644 "$ETC/extra_paths" 2>/dev/null || true
+
 port="${TRIM_SERVICE_PORT:-8669}"
 case "$port" in
   ''|*[!0-9]*) port=8669 ;;
