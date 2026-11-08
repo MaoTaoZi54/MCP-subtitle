@@ -117,7 +117,7 @@ packaging/fnos/build-fpk.sh --image <镜像名> --version <版本> [--with-image
 
 在线包安装时从 `app/docker/image.conf` 的 `IMAGE` 拉取镜像，因此发布前必须先把镜像推送到该地址；尚未推送时请用 `--with-image` 打离线包。
 
-> 有官方 `fnpack` 时脚本调用它打包（上架商店建议用这种方式）；没有 `fnpack` 时回退为 `tar.gz`（`.fpk` 本身即 tar 包），可用于本地测试，但上架前请安装 `fnpack` 重新构建。`--with-image` / `--push-image` 需要本机 Docker。
+> 有官方 `fnpack` 时脚本调用它打包（上架商店建议用这种方式）；没有 `fnpack` 时按官方包结构手工打包：`app/` 内容打成外层 `app.tgz`（解压后为 `docker/`、`ui/`），并写入 `manifest` 的 `checksum`（`app.tgz` 的 md5）。上架前仍建议安装 `fnpack` 重新构建。`--with-image` / `--push-image` 需要本机 Docker。
 
 ### 安装与授权
 

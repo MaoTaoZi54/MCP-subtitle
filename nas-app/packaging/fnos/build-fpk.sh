@@ -7,7 +7,7 @@
 #   packaging/fnos/build-fpk.sh --image ghcr.io/me/nas-app:0.19.0 --with-image
 #   packaging/fnos/build-fpk.sh --push-image    # 构建并推送多架构镜像后打包
 #
-# 有 fnpack 时使用官方工具；没有则回退为 tar.gz（.fpk 本质是 tar 包）。
+# 有 fnpack 时使用官方工具；没有则按官方包结构手工打包（app/ 打成外层 app.tgz）。
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd ../.. && pwd)"
@@ -84,9 +84,18 @@ if command -v fnpack >/dev/null 2>&1; then
   [[ -n "$built" ]] || { echo "fnpack 未生成 fpk" >&2; exit 1; }
   mv "$built" "$OUT"
 else
-  echo "未找到 fnpack，回退为 tar.gz 打包（如用于上架，请安装官方 fnpack 重新构建）"
+  echo "未找到 fnpack，按 fnOS 官方包结构手工打包（外层 app.tgz + 清单/图标/脚本）"
+  STAGE="$(mktemp -d)"
+  trap 'rm -rf "$STAGE"' EXIT
+  # 应用负载：app/ 目录内容打成 app.tgz，解压后直接落在 target 根目录（docker/、ui/）
+  mapfile -t APP_ENTRIES < <(find app -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
+  tar -czf "$STAGE/app.tgz" -C app "${APP_ENTRIES[@]}"
+  cp -a manifest ICON.PNG ICON_256.PNG cmd config wizard "$STAGE/"
+  # fnpack 会在 manifest 里写入 checksum = app.tgz 的 md5，这里保持一致
+  printf 'checksum=%s\n' "$(md5sum "$STAGE/app.tgz" | cut -d' ' -f1)" >> "$STAGE/manifest"
+  chmod +x "$STAGE"/cmd/* 2>/dev/null || true
   rm -f "$OUT"
-  tar --exclude='./build-fpk.sh' --exclude='./*.fpk' --exclude='./dist' -czf "$OUT" .
+  tar -czf "$OUT" -C "$STAGE" manifest app.tgz cmd config wizard ICON.PNG ICON_256.PNG
 fi
 
 echo "完成：$OUT"
