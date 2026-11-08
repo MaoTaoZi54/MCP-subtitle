@@ -184,7 +184,7 @@ class NasAppHandler(BaseHTTPRequestHandler):
                     return
                 if spec.long_running and query.get("async", ["0"])[0] in {"1", "true"}:
                     job = self.server.jobs.submit(name, args)
-                    self._json(202, {"ok": True, "job": job.public()})
+                    self._json(202, {"ok": True, "job": self.server.jobs.as_payload(job)})
                     return
                 self._json(200, self.server.registry.call(name, args))
                 return
@@ -193,7 +193,10 @@ class NasAppHandler(BaseHTTPRequestHandler):
                     limit = self._int_query(query, "limit", 50, 1, 200)
                     self._json(200, {
                         "ok": True,
-                        "jobs": [job.public() for job in self.server.jobs.list(limit)],
+                        "jobs": [
+                            self.server.jobs.as_payload(job, include_result=False)
+                            for job in self.server.jobs.list(limit)
+                        ],
                     })
                 elif method == "POST":
                     body = self._body_json()
@@ -210,7 +213,7 @@ class NasAppHandler(BaseHTTPRequestHandler):
                         self._json(404, {"ok": False, "error": {"code": "unknown_tool", "message": str(exc)}})
                         return
                     job = self.server.jobs.submit(tool, args)
-                    self._json(202, {"ok": True, "job": job.public()})
+                    self._json(202, {"ok": True, "job": self.server.jobs.as_payload(job)})
                 else:
                     self._method_not_allowed()
                 return
@@ -227,7 +230,7 @@ class NasAppHandler(BaseHTTPRequestHandler):
                 except JobFinished as exc:
                     self._json(409, {"ok": False, "error": {"code": exc.code, "message": exc.message}})
                     return
-                self._json(200, {"ok": True, "job": job.public()})
+                self._json(200, {"ok": True, "job": self.server.jobs.as_payload(job)})
                 return
             match = re.fullmatch(r"/api/jobs/([A-Za-z0-9_\-]+)", path)
             if match and method == "GET":
@@ -240,7 +243,7 @@ class NasAppHandler(BaseHTTPRequestHandler):
                 if job is None:
                     self._json(404, {"ok": False, "error": {"code": "not_found", "message": "任务不存在"}})
                     return
-                self._json(200, {"ok": True, "job": job.public()})
+                self._json(200, {"ok": True, "job": self.server.jobs.as_payload(job)})
                 return
             if path == "/api/logs" and method == "GET":
                 self._logs(query)

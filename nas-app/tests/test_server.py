@@ -157,10 +157,20 @@ def test_jobs_api(server, settings):
     status, _, body = call(server, "GET", f"/api/jobs/{job_id}?wait=10", headers=auth())
     data = json.loads(body)
     assert status == 200
-    assert data["job"]["status"] == "succeeded"
+    detail = data["job"]
+    assert detail["status"] == "succeeded"
+    # 与插件侧一致的扁平字段
+    assert detail["pending"] is False
+    assert detail["ok"] is True
+    assert detail["partial"] is False
+    assert detail["result_stored"] is False
+    assert isinstance(detail["result"], dict)
     status, _, body = call(server, "GET", "/api/jobs", headers=auth())
     assert status == 200
-    assert any(job["id"] == job_id for job in json.loads(body)["jobs"])
+    listed = next(job for job in json.loads(body)["jobs"] if job["id"] == job_id)
+    assert listed["result"] is None, "nas_job_list 不得内联 result"
+    assert listed["result_stored"] is False
+    assert listed["pending"] is False
 
 
 def test_cancel_missing_job_404(server):

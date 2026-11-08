@@ -281,7 +281,10 @@ const FRIENDLY = {
     JACKETT_PARSE: 'Jackett 返回的内容解析失败。',
     JACKETT_EMPTY: 'Jackett 没有返回结果。',
   },
-  job: { queued: '排队中', running: '进行中', succeeded: '完成', failed: '失败', canceled: '已取消' },
+  job: {
+    queued: '排队中', running: '进行中', succeeded: '完成', failed: '失败',
+    canceled: '已取消', interrupted: '已中断',
+  },
   risk: { read: '只查看', write: '会修改文件', delete: '会删除文件' },
   category: { 配置: '设置', 文件: '文件', 媒体: '媒体', 运维: '维护', 字幕: '字幕', 资源: '资源', 整理: '整理' },
   field: {
@@ -2350,7 +2353,7 @@ async function pollJob(id, out) {
   for (let i = 0; i < 900; i += 1) {
     const data = await api('/api/jobs/' + encodeURIComponent(id) + '?wait=20');
     job = data.job;
-    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'canceled') return job;
+    if (JOB_TERMINAL.has(job.status)) return job;
     out.textContent = '';
     const waited = Math.round((Date.now() - started) / 1000);
     const p = job.progress || {};
@@ -2369,9 +2372,15 @@ async function pollJob(id, out) {
   return job || { status: 'failed', error: { code: 'timeout', message: '等待任务结果超时' } };
 }
 
-// 部分结果以任务结果里的 canceled/partial 标记为准，不用状态推断
+// 终态：与后端 TERMINAL_STATUSES 对齐（interrupted 是应用重启导致的独立终态）
+const JOB_TERMINAL = new Set(['succeeded', 'failed', 'canceled', 'interrupted']);
+
+// 部分结果以任务结果里的 canceled/partial 标记为准；列表接口不内联 result 时
+// 用后端聚合出的扁平 partial 字段，不用状态推断
 function jobPartial(job) {
-  return !!(job && job.result && (job.result.canceled === true || job.result.partial === true));
+  if (!job) return false;
+  if (job.partial === true) return true;
+  return !!(job.result && (job.result.canceled === true || job.result.partial === true));
 }
 
 // 同一个工具勾了多个文件夹时：逐个子目录执行，结果按文件夹分段展示
@@ -2396,7 +2405,7 @@ async function runBatch(name, spec, args, pathName, paths, out) {
         const created = await api('/api/jobs', { method: 'POST', body: { tool: name, args: one } });
         pollJobsIndicator();
         const job = await pollJob(created.job.id, body);
-        result = (job.status === 'succeeded' || job.status === 'canceled') && job.result
+        result = JOB_TERMINAL.has(job.status) && job.result
           ? job.result
           : { ok: false, error: job.error || { code: job.status, message: '任务未成功' } };
       } else {
@@ -4194,8 +4203,12 @@ function renderJobs(jobs, onRefresh = null) {
     title.appendChild(el('strong', null, job.title || job.tool));
     title.appendChild(document.createTextNode(' '));
     const cls = job.status === 'succeeded' ? 'ok'
-      : (job.status === 'failed' ? 'err' : (job.status === 'canceled' ? '' : 'warn'));
+      : (job.status === 'failed' || job.status === 'interrupted' ? 'err'
+        : (job.status === 'canceled' ? '' : 'warn'));
     title.appendChild(el('span', 'badge ' + cls, pick(FRIENDLY.job, job.status, job.status)));
+    if (jobPartial(job)) title.appendChild(el('span', 'badge warn', t('部分结果', '部分结果')));
+    if (job.result_stored) title.appendChild(el('span', 'badge', t('结果已存档', '结果已存')));
+    if (job.pending) title.appendChild(el('span', 'badge warn', t('还有任务在跑', '还在跑')));
     left.appendChild(title);
     const metaBits = [];
     if (IS_PRO()) metaBits.push(job.id);
@@ -4244,7 +4257,7 @@ function renderJobs(jobs, onRefresh = null) {
     }
 
     row.appendChild(left);
-    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'canceled') {
+    if (JOB_TERMINAL.has(job.status)) {
       const btn = el('button', 'ghost small', '查看结果');
       btn.type = 'button';
       btn.addEventListener('click', () => showJob(job));
@@ -4284,7 +4297,16 @@ function renderJobs(jobs, onRefresh = null) {
   return wrap;
 }
 
-function showJob(job) {
+async function showJob(job) {
+  // 列表接口不内联 result：终态任务（尤其 result_stored）先拉详情再渲染
+  if (job && !job.result && (job.result_stored || JOB_TERMINAL.has(job.status))) {
+    try {
+      const data = await api('/api/jobs/' + encodeURIComponent(job.id));
+      if (data.job) job = Object.assign({}, job, data.job);
+    } catch (_) {
+      // 拉详情失败时保留列表里的元信息，下面按状态给出可读提示
+    }
+  }
   const view = document.getElementById('view');
   const card = el('article', 'card');
   const head = el('div', 'card-head');
@@ -4296,15 +4318,23 @@ function showJob(job) {
   card.appendChild(head);
   const body = el('div', 'card-body');
   const out = el('div');
-  // 部分结果说明与 result.canceled / result.partial 同源，不靠状态推断
+  // 部分结果说明与 result.canceled / result.partial 同源，不靠状态推断；
+  // interrupted / canceled / partial 三种状态都给一句人话解释。
   if (jobPartial(job)) {
     const note = el('div', 'job-partial-note');
-    note.appendChild(el('strong', null, t('任务已取消，下面是已完成的部分。', '任务取消了，下面是已经做完的部分。')));
+    const text = job.status === 'interrupted'
+      ? t('应用重启导致任务中断，下面是已完成的部分。', '应用重启把任务打断了，下面是已经做完的部分。')
+      : t('任务已取消，下面是已完成的部分。', '任务取消了，下面是已经做完的部分。');
+    note.appendChild(el('strong', null, text));
     body.appendChild(note);
   }
   if (job.result) renderResult(job.result, out, { tool: job.tool, args: job.args || {} });
   else if (job.status === 'canceled') {
     out.appendChild(el('p', 'muted', t('任务已取消，还没有开始执行。', '任务已取消，还没开始做。')));
+  } else if (job.status === 'interrupted') {
+    out.appendChild(el('p', 'muted', t(
+      '任务在应用重启时中断，没有产生结果；需要的话重新运行一次。',
+      '任务被应用重启打断了，没有结果；需要的话再跑一次。')));
   } else out.appendChild(errorBox(job.error || { code: job.status, message: '无结果' }));
   body.appendChild(out);
   card.appendChild(body);
@@ -5247,7 +5277,7 @@ async function pageWorkbench(view) {
   const jobsTools = el('div', 'toolbar');
   const statusSel = document.createElement('select');
   statusSel.setAttribute('aria-label', t('按状态筛选任务', '按状态筛选'));
-  for (const [v, txt] of [['', t('全部状态', '全部')], ['running', t('进行中', '正在跑')], ['queued', t('排队中', '排队中')], ['succeeded', t('已完成', '已完成')], ['failed', t('失败', '失败')], ['canceled', t('已取消', '已取消')]]) {
+  for (const [v, txt] of [['', t('全部状态', '全部')], ['running', t('进行中', '正在跑')], ['queued', t('排队中', '排队中')], ['succeeded', t('已完成', '已完成')], ['failed', t('失败', '失败')], ['canceled', t('已取消', '已取消')], ['interrupted', t('已中断', '已中断')]]) {
     const opt = document.createElement('option');
     opt.value = v;
     opt.textContent = txt;
@@ -5289,8 +5319,9 @@ async function pageWorkbench(view) {
     }
     jbody.appendChild(renderJobs(list, paintJobs));
   };
-  const loadJobs = async () => {
-    if (document.hidden) return;
+  const loadJobs = async (force = false) => {
+    // 后台标签页不轮询；但首次进入必须拉一次，否则隐藏状态打开会误显示「暂无任务」
+    if (document.hidden && !force) return;
     try {
       const data = await api('/api/jobs?limit=40');
       jobsCache = data.jobs || [];
@@ -5303,7 +5334,10 @@ async function pageWorkbench(view) {
   };
   statusSel.addEventListener('change', paintJobs);
   refreshJobs.addEventListener('click', loadJobs);
-  await loadJobs();
+  await loadJobs(true);
+  if (S.jobsVisibleHandler) document.removeEventListener('visibilitychange', S.jobsVisibleHandler);
+  S.jobsVisibleHandler = () => { if (!document.hidden) loadJobs(true); };
+  document.addEventListener('visibilitychange', S.jobsVisibleHandler);
   S.timer = setInterval(loadJobs, 2000);
 
   const logCard = el('article', 'card');

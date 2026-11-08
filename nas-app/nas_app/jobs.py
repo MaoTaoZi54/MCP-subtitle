@@ -23,7 +23,12 @@ from .toolkit import ToolRegistry
 
 logger = logging.getLogger("nas_app.jobs")
 
-TERMINAL_STATUSES = {"succeeded", "failed", "canceled"}
+# 与插件侧 nas_jobs 对齐：interrupted 是独立终态（应用重启导致），
+# 不再借 failed + error.code 表达，前端可直接按状态渲染。
+TERMINAL_STATUSES = {"succeeded", "failed", "canceled", "interrupted"}
+PENDING_STATUSES = {"queued", "running"}
+# 单任务结果超过阈值时只落盘指针，任务记录保持小体积（与插件侧一致）
+RESULT_STORE_THRESHOLD = 4 * 1024 * 1024
 # 进度落盘节流：内存更新每次上报都做（廉价），磁盘最多每 2 秒一次
 PROGRESS_SAVE_INTERVAL = 2.0
 QUEUED_CANCEL_RESULT = {
@@ -71,6 +76,9 @@ class Job:
     progress: dict[str, Any] | None = None
     cancel_requested: bool = False
     canceled_at: str | None = None
+    # 大结果落盘指针（与插件侧同形）
+    result_file: str | None = None
+    result_size: int | None = None
     # 运行时对象，不落盘
     cancel_event: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
     last_progress_save: float = field(default=0.0, repr=False, compare=False)
@@ -91,6 +99,8 @@ class Job:
             "progress": self.progress,
             "cancel_requested": self.cancel_requested,
             "canceled_at": self.canceled_at,
+            "result_file": self.result_file,
+            "result_size": self.result_size,
         }
 
 
@@ -120,7 +130,9 @@ class JobManager:
     def __init__(self, registry: ToolRegistry, data_dir: Path, max_workers: int = 2):
         self.registry = registry
         self.dir = Path(data_dir) / "jobs"
+        self.results_dir = self.dir / "results"
         self.dir.mkdir(parents=True, exist_ok=True)
+        self.results_dir.mkdir(parents=True, exist_ok=True)
         self._save_lock = threading.Lock()
         self._jobs: dict[str, Job] = {}
         self._order: list[str] = []
@@ -158,6 +170,31 @@ class JobManager:
         with self._lock:
             ids = self._order[-limit:][::-1]
             return [self._jobs[i] for i in ids if i in self._jobs]
+
+    def as_payload(self, job: Job, *, include_result: bool = True) -> dict[str, Any]:
+        """对外返回：与插件侧 nas_jobs 的扁平结构保持一致。
+
+        列表接口用 include_result=False，大结果不内联（只给 result_stored 指针）；
+        单个任务详情接口才内联 result。
+        """
+        data = job.public()
+        data["partial"] = bool(
+            isinstance(job.result, dict)
+            and (job.result.get("canceled") is True or job.result.get("partial") is True)
+        )
+        if not include_result:
+            data["result"] = None
+        elif job.result is None and job.result_file:
+            try:
+                data["result"] = json.loads(
+                    Path(job.result_file).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError) as exc:
+                data["result_error"] = f"结果文件读取失败: {exc}"
+        data["pending"] = job.status in PENDING_STATUSES
+        data["ok"] = job.status == "succeeded"
+        data["result_stored"] = bool(job.result_file)
+        return data
 
     def wait(self, job_id: str, timeout: float = 25.0) -> Job | None:
         deadline = time.monotonic() + max(0.0, timeout)
@@ -299,12 +336,48 @@ class JobManager:
         # 提交线程与工作线程会同时保存同一个任务：串行化并各用独立临时文件，
         # 避免共享 .json.tmp 时 replace 竞争导致 ENOENT。
         with self._save_lock:
+            with self._lock:
+                payload = job.public()
+                result = job.result
+                old_result_file = job.result_file
+            if result is not None:
+                try:
+                    encoded = json.dumps(result, ensure_ascii=False, default=str).encode("utf-8")
+                except (TypeError, ValueError):
+                    encoded = json.dumps(str(result), ensure_ascii=False).encode("utf-8")
+                size = len(encoded)
+                if size > RESULT_STORE_THRESHOLD:
+                    result_path = self.results_dir / f"{job.id}.json"
+                    try:
+                        self.results_dir.mkdir(parents=True, exist_ok=True)
+                        tmp = result_path.with_name(f".{result_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+                        tmp.write_bytes(encoded)
+                        tmp.replace(result_path)
+                        payload["result"] = None
+                        payload["result_file"] = str(result_path)
+                        payload["result_size"] = size
+                        with self._lock:
+                            job.result_file = str(result_path)
+                            job.result_size = size
+                    except OSError as exc:
+                        logger.warning("任务结果另存失败 %s: %s", job.id, exc)
+                        payload["result_size"] = size
+                else:
+                    payload["result_size"] = size
+                    if old_result_file:
+                        try:
+                            Path(old_result_file).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                        with self._lock:
+                            job.result_file = None
+                            job.result_size = size
+                        payload["result_file"] = None
             try:
                 self.dir.mkdir(parents=True, exist_ok=True)
-                text = json.dumps(job.public(), ensure_ascii=False, default=str)
                 path = self.dir / f"{job.id}.json"
                 tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
-                tmp.write_text(text, encoding="utf-8")
+                tmp.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
                 tmp.replace(path)
             except OSError as exc:
                 logger.warning("任务落盘失败 %s: %s", job.id, exc)
@@ -332,6 +405,8 @@ class JobManager:
                     progress=data.get("progress") if isinstance(data.get("progress"), dict) else None,
                     cancel_requested=bool(data.get("cancel_requested")),
                     canceled_at=data.get("canceled_at"),
+                    result_file=data.get("result_file"),
+                    result_size=data.get("result_size"),
                 )
             except (OSError, ValueError, KeyError):
                 continue
@@ -343,7 +418,7 @@ class JobManager:
                     job.finished_at = job.canceled_at
                     mark_partial(job.result)
                 else:
-                    job.status = "failed"
+                    job.status = "interrupted"
                     job.error = {"code": "interrupted", "message": "应用重启，任务已中断"}
                     job.finished_at = _now()
                 self._save(job)

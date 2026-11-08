@@ -89,7 +89,54 @@ def test_jobs_list_newest_first(jobs, settings):
     assert listed[0].id == second.id
 
 
-def test_interrupted_jobs_marked_failed(jobs, settings, registry):
+def test_as_payload_matches_plugin_flat_shape(jobs, settings):
+    media = settings.config_path.parent.parent / "media"
+    job = jobs.submit("nas_list_directory", {"path": str(media)})
+    done = jobs.wait(job.id, timeout=10)
+    assert done is not None and done.status == "succeeded"
+
+    full = jobs.as_payload(done)
+    assert full["pending"] is False
+    assert full["ok"] is True
+    assert full["partial"] is False
+    assert full["result_stored"] is False
+    assert isinstance(full["result"], dict)
+
+    listed = jobs.as_payload(done, include_result=False)
+    assert listed["result"] is None, "列表接口不得内联 result"
+    assert listed["result_stored"] is False
+
+
+def test_large_result_stored_to_file(jobs):
+    from nas_app.jobs import RESULT_STORE_THRESHOLD, Job
+
+    blob = "x" * (RESULT_STORE_THRESHOLD + 100)
+    job = Job(
+        id="J-20260101-000000-big1",
+        tool="nas_scan_media",
+        title="大结果",
+        args={},
+        status="succeeded",
+        result={"ok": True, "blob": blob},
+    )
+    jobs._save(job)
+
+    assert job.result_file, "超阈值结果应落盘"
+    assert job.result_size and job.result_size > RESULT_STORE_THRESHOLD
+    saved = json.loads((jobs.dir / f"{job.id}.json").read_text(encoding="utf-8"))
+    assert saved["result"] is None
+    assert saved["result_file"] and Path(saved["result_file"]).exists()
+
+    payload = jobs.as_payload(job)
+    assert payload["result_stored"] is True
+    assert payload["result"]["blob"] == blob
+
+    listed = jobs.as_payload(job, include_result=False)
+    assert listed["result"] is None
+    assert listed["result_stored"] is True
+
+
+def test_interrupted_jobs_marked_interrupted(jobs, settings, registry):
     from nas_app.jobs import JobManager
 
     path = settings.data_dir / "jobs" / "J-20260101-000000-dead.json"
@@ -103,7 +150,7 @@ def test_interrupted_jobs_marked_failed(jobs, settings, registry):
     reloaded = JobManager(registry, settings.data_dir, max_workers=1)
     job = reloaded.get("J-20260101-000000-dead")
     assert job is not None
-    assert job.status == "failed"
+    assert job.status == "interrupted"
     assert job.error["code"] == "interrupted"
 
 
