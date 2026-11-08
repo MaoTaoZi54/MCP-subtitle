@@ -5,4 +5,4 @@
 L3 删除需 enable_delete；字幕下载需 subhd.enabled + enable_write 双开关。
 """
 
-__version__ = "0.19.17"
+__version__ = "0.19.28"
