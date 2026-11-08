@@ -8,7 +8,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 image="${IMAGE:-ghcr.io/maotaozi54/nas-app}"
-tag="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)"
+# Windows 挂载目录下 pyproject.toml 为 CRLF，需去掉 sed 带出的 \r
+tag="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1 | tr -d '\r')"
 platforms="linux/amd64,linux/arm64"
 push=""
 
