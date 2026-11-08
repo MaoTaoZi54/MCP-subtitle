@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 from nas_mcp import __version__ as CORE_VERSION
 
 from . import APP_DISPLAY_NAME, __version__
-from .jobs import JobManager
+from .jobs import JobFinished, JobManager, JobNotFound
 from .settings import AppSettings
 from .toolkit import InvalidArguments, ToolRegistry
 
@@ -213,6 +213,21 @@ class NasAppHandler(BaseHTTPRequestHandler):
                     self._json(202, {"ok": True, "job": job.public()})
                 else:
                     self._method_not_allowed()
+                return
+            match = re.fullmatch(r"/api/jobs/([A-Za-z0-9_\-]+)/cancel", path)
+            if match:
+                if method != "POST":
+                    self._method_not_allowed()
+                    return
+                try:
+                    job = self.server.jobs.cancel(match.group(1))
+                except JobNotFound as exc:
+                    self._json(404, {"ok": False, "error": {"code": exc.code, "message": exc.message}})
+                    return
+                except JobFinished as exc:
+                    self._json(409, {"ok": False, "error": {"code": exc.code, "message": exc.message}})
+                    return
+                self._json(200, {"ok": True, "job": job.public()})
                 return
             match = re.fullmatch(r"/api/jobs/([A-Za-z0-9_\-]+)", path)
             if match and method == "GET":

@@ -163,6 +163,32 @@ def test_jobs_api(server, settings):
     assert any(job["id"] == job_id for job in json.loads(body)["jobs"])
 
 
+def test_cancel_missing_job_404(server):
+    status, _, body = call(server, "POST", "/api/jobs/J-nope/cancel", headers=auth())
+    assert status == 404
+    assert json.loads(body)["error"]["code"] == "not_found"
+
+
+def test_cancel_finished_job_409(server, settings):
+    media = settings.config_path.parent.parent / "media"
+    status, _, body = call(
+        server, "POST", "/api/jobs",
+        body={"tool": "nas_list_directory", "args": {"path": str(media)}},
+        headers=auth({"X-Nas-App": "1"}),
+    )
+    job_id = json.loads(body)["job"]["id"]
+    status, _, body = call(server, "GET", f"/api/jobs/{job_id}?wait=10", headers=auth())
+    assert json.loads(body)["job"]["status"] == "succeeded"
+    status, _, body = call(server, "POST", f"/api/jobs/{job_id}/cancel", headers=auth())
+    assert status == 409
+    assert json.loads(body)["error"]["code"] == "already_finished"
+
+
+def test_cancel_requires_post(server):
+    status, _, _ = call(server, "GET", "/api/jobs/J-x/cancel", headers=auth())
+    assert status in {404, 405}
+
+
 def test_static_traversal_blocked(server):
     for path in ("/static/../settings.py", "/static/%2e%2e/settings.py", "/static/..%2fsettings.py"):
         status, _, _ = call(server, "GET", path)
