@@ -130,6 +130,7 @@ packaging/fnos/build-fpk.sh --image <镜像名> --version <版本> [--with-image
 生命周期行为：
 
 - 启动/停止/重启由应用自身的 `cmd/main` 管理容器（`--restart unless-stopped`）；升级先停旧容器，配置变更后自动重启。
+- 应用数据目录固定为宿主机 `/var/apps/nas-media/var`，以数据卷挂载到容器 `/data`；首次启动会生成 `config.yaml`、`logs/nas-app.log` 与 `jobs/` 任务记录，升级保留该目录。
 - 访问令牌保存在应用配置目录 `token` 文件（权限 600），卸载时默认保留应用数据；向导勾选「同时删除应用数据」才会清理容器与 `/data`。
 - 端口默认 8669，可在 manifest 的 `service_port` 与 `cmd/common.sh` 的 `CONTAINER_PORT` 同步修改。
 - MCP 默认映射到宿主机 `127.0.0.1:8670`；启动前会检查端口，被占用时自动禁用 MCP 并继续启动 Web UI。端口号保存在应用配置目录的 `mcp_port` 文件。

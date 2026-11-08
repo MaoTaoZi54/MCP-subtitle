@@ -7,6 +7,10 @@
         "helpText": "本应用通过 Docker 运行。安装完成后，请到「应用设置 → 授权目录」把媒体库目录授权给本应用；应用会把授权目录按相同路径挂载进容器（可读写）。未授权目录前应用无法启动。"
       },
       {
+        "type": "tips",
+        "helpText": "应用数据目录固定为宿主机 /var/apps/nas-media/var，并以数据卷挂载到容器的 /data。首次启动会在这里生成 config.yaml、logs/nas-app.log 和 jobs/ 任务记录；升级保留该目录，卸载时可在向导里选择是否删除。"
+      },
+      {
         "type": "password",
         "field": "wizard_token",
         "label": "访问令牌",
