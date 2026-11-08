@@ -343,7 +343,7 @@ def probe_pan_url(
         # 分享内没有直接识别为视频的文件（可能是纯压缩包、文档或空目录）
         return PanProbeResult(
             supported=True,
-            verified=True,
+            verified=False,
             pan_type="quark",
             share_title=share_title,
             total_files=total_files,

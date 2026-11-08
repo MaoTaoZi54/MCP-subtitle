@@ -28,6 +28,7 @@ from . import media as media_tools
 from .config import Limits, MediaConfig
 from .fs_utils import normalize_list_arg
 from .library import _collect_targets
+from .progress import check_canceled, mark_partial, report
 from .security import InvalidArguments, PathGuard
 
 logger = logging.getLogger("nas_mcp.integrity")
@@ -194,8 +195,17 @@ def integrity_check(
     probe_attempts = 0
     probed_files = 0
     probe_failures = 0
+    canceled = False
+    processed = 0
+    report("check", "检查文件完整性", done=0, total=len(page))
 
-    for video in page:
+    for idx, video in enumerate(page, 1):
+        processed = idx - 1
+        # 合作式取消：每条目边界检查一次（只读操作，随时可停）
+        if check_canceled():
+            canceled = True
+            break
+        report("check", "检查文件完整性", done=processed, total=len(page), current=video.name)
         # 权限/可读性：先 stat；PermissionError 只进 errors，不当 status
         try:
             st = video.stat()
@@ -263,12 +273,20 @@ def integrity_check(
             "probe_ok": assessment["probe_ok"],
         })
 
+    else:
+        processed = len(page)
+
     probe_budget_exhausted = probe_attempts >= mcfg.max_probe_files and any(
         it["status"] == "unknown" and "probe_budget_exhausted" in it["reasons"]
         for it in items
     )
 
-    return {
+    if canceled:
+        report("check", "已取消，保留已完成部分", done=processed, total=len(page))
+    else:
+        report("check", "检查文件完整性", done=processed, total=len(page))
+
+    result = {
         "ok": True,
         "mode": mode,
         "scope": {
@@ -289,3 +307,4 @@ def integrity_check(
         "items": items,
         "errors": errors + meta["walk_errors"],
     }
+    return mark_partial(result) if canceled else result

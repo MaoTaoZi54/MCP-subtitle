@@ -38,6 +38,7 @@ from .config import Limits, MediaConfig, OrganizerConfig, TmdbConfig
 from .fs_utils import ErrorSink, ensure_dir, iter_tree, mark_incomplete_from_sink
 from .media import ProbeError, find_external_subtitles, probe_video
 from .platform_hints import permission_hint_text
+from .progress import check_canceled, mark_partial, report
 from .release import parse_release
 from .resolver import ResolverError
 from .security import AccessDenied, InvalidArguments, PathGuard, expand_roots
@@ -2510,6 +2511,14 @@ def execute_plan(
     for item in plan_items:
         item["executed"] = False
 
+    actionable_total = sum(
+        1 for item in plan_items
+        if item.get("action") in ("move", "rename_dir", "identical", "duplicate", "cleanup_dir")
+    )
+    canceled = False
+    done = 0
+    report("execute", "执行整理计划", done=0, total=actionable_total)
+
     def _fail(item: dict, action: str, source: str, target: str, exc: Exception) -> None:
         executed["failed"] += 1
         errors.append(f"{source}: {exc}")
@@ -2546,7 +2555,13 @@ def execute_plan(
     for item in plan_items:
         if item.get("action") not in ("identical", "duplicate"):
             continue
+        if canceled or check_canceled():
+            canceled = True
+            break
         source, target = str(item.get("source") or ""), str(item.get("target") or "")
+        report("execute", "执行整理计划", done=done, total=actionable_total,
+               current=Path(source).name if source else None)
+        done += 1
         try:
             src = guard.check(source)
             if enable_delete:
@@ -2592,7 +2607,13 @@ def execute_plan(
     for item in plan_items:
         if item.get("action") != "rename_dir":
             continue
+        if canceled or check_canceled():
+            canceled = True
+            break
         source, target = str(item.get("source") or ""), str(item.get("target") or "")
+        report("execute", "执行整理计划", done=done, total=actionable_total,
+               current=Path(source).name if source else None)
+        done += 1
         try:
             src, dst = guard.check(source), guard.check(target)
             if dst.exists():
@@ -2626,6 +2647,9 @@ def execute_plan(
             continue
         if not item.get("related") or item.get("executed") is not True:
             continue
+        if canceled or check_canceled():
+            canceled = True
+            break
         source, target = str(item.get("source") or ""), str(item.get("target") or "")
         for rel in item.get("related", []):
             try:
@@ -2665,7 +2689,13 @@ def execute_plan(
     for item in plan_items:
         if item.get("action") != "move":
             continue
+        if canceled or check_canceled():
+            canceled = True
+            break
         source, target = str(item.get("source") or ""), str(item.get("target") or "")
+        report("execute", "执行整理计划", done=done, total=actionable_total,
+               current=Path(source).name if source else None)
+        done += 1
         try:
             src = guard.check(source)
             dst = guard.check(target)
@@ -2706,7 +2736,13 @@ def execute_plan(
     for item in plan_items:
         if item.get("action") != "cleanup_dir":
             continue
+        if canceled or check_canceled():
+            canceled = True
+            break
         source = str(item.get("source") or "")
+        report("execute", "执行整理计划", done=done, total=actionable_total,
+               current=Path(source).name if source else None)
+        done += 1
         try:
             d = guard.check(source)
             if enable_delete:
@@ -2746,6 +2782,10 @@ def execute_plan(
                 executed["moved"], executed["renamed_dirs"], executed["failed"],
                 executed["cleaned_dirs"], executed["deleted_files"],
                 executed["level3_pending"])
+    if canceled:
+        report("execute", "已取消，保留已完成部分", done=done, total=actionable_total)
+        return mark_partial(result)
+    report("execute", "执行整理计划", done=done, total=actionable_total)
     return result
 
 

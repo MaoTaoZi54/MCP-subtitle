@@ -26,6 +26,52 @@ const NAV = [
   { id: 'workbench', label: '工具台', icon: '⌘' },
 ];
 
+// 工具台按用途分组：覆盖全部 28 个工具，分组可折叠，展开状态记在本地
+const WORKBENCH_GROUPS = [
+  {
+    id: 'io', title: '目录与磁盘',
+    hint: '翻看文件夹、找文件、看空间与当前配置',
+    tools: ['nas_list_directory', 'nas_find_files', 'nas_disk_usage', 'nas_get_config'],
+  },
+  {
+    id: 'scan', title: '媒体扫描与体检',
+    hint: '扫描媒体库、查画质/重复/缺集/损坏',
+    tools: ['nas_scan_media', 'nas_check_subtitle', 'nas_classify_region', 'media_quality_analyze',
+      'duplicate_media_detect', 'media_library_audit', 'media_missing_episodes', 'media_integrity_check'],
+  },
+  {
+    id: 'subtitle', title: '字幕',
+    hint: '搜索、下载、批量补齐与混流字幕',
+    tools: ['subhd_search', 'subhd_download', 'media_fill_subtitles', 'media_mux_subtitles'],
+  },
+  {
+    id: 'resource', title: '资源搜索',
+    hint: '聚合搜索、各站点搜索与网盘/磁力解析',
+    tools: ['media_search', 'jackett_search', 'seedhub_search', 'seedhub_magnets', 'seedhub_pans',
+      'dysbk_search', 'dysbk_links', 'resolve_media'],
+  },
+  {
+    id: 'cleanup', title: '整理与清理',
+    hint: '规范整理、定位影片、垃圾清理与回滚',
+    tools: ['organize_media', 'find_media', 'media_cleanup', 'media_rollback'],
+  },
+];
+
+const WORKBENCH_OPEN_KEY = 'nas-workbench-groups';
+
+function loadWorkbenchOpen() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WORKBENCH_OPEN_KEY) || '{}');
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveWorkbenchOpen(state) {
+  try { localStorage.setItem(WORKBENCH_OPEN_KEY, JSON.stringify(state)); } catch (_) { /* 隐私模式忽略 */ }
+}
+
 const LABELS = {
   name: '名称', title: '标题', path: '路径', relative_path: '相对路径', type: '类型',
   media_category: '类别', status: '状态', season: '季', episode: '集', resolution: '分辨率',
@@ -41,6 +87,22 @@ const LABELS = {
   season_count: '季数', episode_count: '集数', file_count: '文件数', group_count: '组数',
   max_list_entries: '列表条数上限', max_search_results: '搜索结果上限', max_scan_files: '扫描文件数上限',
   max_list_depth: '目录层数上限', max_errors_reported: '错误条目上限',
+  indexer: '索引器', year: '年份', media_type: '媒体类型', canonical_title: '规范片名',
+  original_title: '原始片名', original_language: '原始语言', origin_country: '出品地区',
+  tmdb_id: 'TMDB 编号', tvdb_id: 'TVDB 编号', imdb_id: 'IMDb 编号', douban_id: '豆瓣编号',
+  page_url: '详情页', detail_url: '详情页', share_url: '分享页', file_id: '文件编号',
+  share_id: '分享编号', host: '网盘', url: '链接', link: '链接', links: '链接',
+  quality: '画质', edition: '版本', group: '分组', tag: '标签', video_codec: '视频编码',
+  audio_codec: '音频编码', bit_rate: '码率', frame_rate: '帧率', source_type: '来源类型',
+  is_chinese: '是否国产', has_chinese_subtitle: '有中文字幕', missing_episodes: '缺少的集',
+  detected: '识别结果', expected: '预期', actual: '实际', matches: '匹配情况', query: '搜索词',
+  total_matched: '匹配总数', returned: '本次返回', truncated: '结果被截断', offset: '跳过条数',
+  limit: '返回上限', recursive: '包含子目录', roots: '搜索位置', extension: '扩展名',
+  extensions: '扩展名', free_bytes: '剩余字节', used_bytes: '已用字节', total_bytes: '总字节',
+  fstype: '磁盘格式', ok: '是否成功', error: '错误', code: '错误码', level: '级别',
+  count: '数量', size_human: '大小', source_path: '源路径', target_path: '目标路径',
+  device: '设备', mounted: '挂载点', sampled_from: '采样来源', scope: '范围',
+  skipped: '已跳过', missing: '缺失项', root: '根目录', mount: '挂载点',
 };
 
 const PRIORITY = ['name', 'title', 'relative_path', 'path', 'status', 'media_category', 'type',
@@ -135,6 +197,37 @@ const FRIENDLY = {
     dysbk_links: '拿网盘直链',
     media_search: '一次搜遍所有资源站',
   },
+  // 卡片的一句话说明：只讲「这件事帮你干什么」，技术细节留给「技术信息」折叠
+  desc: {
+    nas_get_config: '查看当前生效的设置项、开关与路径',
+    nas_list_directory: '翻看一个文件夹里有哪些文件',
+    nas_find_files: '按文件名或后缀在媒体库里找文件',
+    nas_disk_usage: '看看磁盘还有多少可用空间',
+    nas_scan_media: '扫一遍媒体库，列出影片和剧集',
+    nas_check_subtitle: '查一个视频有没有字幕、是什么语言',
+    nas_classify_region: '根据音轨和命名判断是不是国产片',
+    media_quality_analyze: '检查分辨率、编码、音轨和 HDR 情况',
+    duplicate_media_detect: '找出内容重复或疑似重复的多个版本',
+    media_library_audit: '整体盘点媒体库，报告问题与统计',
+    media_missing_episodes: '检查剧集缺了哪几集',
+    media_integrity_check: '检查视频文件有没有损坏',
+    media_cleanup: '找出垃圾文件和空目录（默认只预览）',
+    media_rollback: '撤销上一次整理或改名操作',
+    subhd_search: '在 SubHD 搜索匹配的字幕',
+    subhd_download: '下载选中的字幕文件到本地',
+    media_fill_subtitles: '批量给缺字幕的剧集补字幕',
+    media_mux_subtitles: '把外挂字幕混流进视频文件',
+    resolve_media: '从文件名解析片名、年份和季集',
+    jackett_search: '通过 Jackett 搜索 PT 资源',
+    seedhub_search: '在 SeedHub 搜索影视资源页',
+    seedhub_magnets: '从 SeedHub 页面提取磁力链接',
+    seedhub_pans: '从 SeedHub 页面提取网盘链接',
+    dysbk_search: '在网盘分享站按片名搜资源',
+    dysbk_links: '把网盘分享页解析成直链',
+    media_search: '一次查询聚合多个资源站的结果',
+    organize_media: '按影片信息规范命名并移动文件',
+    find_media: '查找某部影片或剧集放在哪个文件夹',
+  },
   param: {
     path: '文件夹位置', paths: '视频文件列表', root: '从哪个文件夹开始', roots: '文件夹列表',
     keyword: '关键词', keywords: '关键词（可多个）', query: '搜索词', queries: '搜索词（可多个）',
@@ -188,7 +281,7 @@ const FRIENDLY = {
     JACKETT_PARSE: 'Jackett 返回的内容解析失败。',
     JACKETT_EMPTY: 'Jackett 没有返回结果。',
   },
-  job: { queued: '排队中', running: '进行中', succeeded: '完成', failed: '失败' },
+  job: { queued: '排队中', running: '进行中', succeeded: '完成', failed: '失败', canceled: '已取消' },
   risk: { read: '只查看', write: '会修改文件', delete: '会删除文件' },
   category: { 配置: '设置', 文件: '文件', 媒体: '媒体', 运维: '维护', 字幕: '字幕', 资源: '资源', 整理: '整理' },
   field: {
@@ -209,6 +302,20 @@ const FRIENDLY = {
     max_list_entries: '一次最多列出多少条', max_search_results: '最多搜出多少条结果',
     max_scan_files: '最多检查多少个文件', max_list_depth: '往子文件夹里翻几层',
     max_errors_reported: '最多报告多少个错误',
+    probe: '读取编码信息', missing_subtitle_only: '只看缺字幕的', media_type: '媒体类型',
+    probe_attempts: '探测次数', probed_files: '已探测文件数', probe_budget: '探测上限',
+    probe_budget_exhausted: '探测预算用完', total_files: '文件总数', duplicate_groups: '重复组数',
+    duplicate_files: '重复文件数', suspect_groups: '可疑组数', tmdb_enabled: 'TMDB 已启用',
+    title_resolution: '标题识别方式', pagination: '分页', total_shows: '剧集总数',
+    next_offset: '下一页起点', dry_run: '仅预览（不动文件）', mode: '模式',
+    enable_write: '允许改动文件', season_pack_threshold: '整季包阈值',
+    scanned_count: '已扫描', skipped_count: '已跳过', matched_count: '已匹配',
+    budget_seconds: '耗时预算', budget_exhausted: '预算用完', rollback_supported: '支持回滚',
+    rollback_note: '回滚说明', search_status: '搜索状态', site_attempts: '站点尝试',
+    tried_sites: '尝试过的站点', site_errors: '站点错误', checks: '检查项',
+    operation_id: '操作编号', media_root: '媒体库位置', status: '状态', reason: '原因',
+    overall: '总体状态', files: '文件', results: '结果', candidates: '候选',
+    movie: '电影', tv: '剧集', anime: '动画', documentary: '纪录片', variety: '综艺',
   },
 };
 
@@ -679,10 +786,14 @@ function openMediaActionModal(entry) {
             try {
               const real = await startFillJob({ path: parentPath(entry.path), dry_run: false }, status);
               status.textContent = '';
-              if (real.status === 'succeeded') {
+              if (real.status === 'succeeded' || jobPartial(real)) {
                 renderResult(real.result || {}, status, { tool: 'media_fill_subtitles' });
-                toast(t('补字幕执行完成', '补字幕做完了'));
-                checkSubs();
+                if (jobPartial(real)) {
+                  toast(t('已取消，已完成的部分保留', '取消了，做完的部分都留着'));
+                } else {
+                  toast(t('补字幕执行完成', '补字幕做完了'));
+                  checkSubs();
+                }
               } else {
                 status.appendChild(errorBox({ code: 'internal_error', message: (real.error && real.error.message) || '任务失败' }));
               }
@@ -726,7 +837,11 @@ function openMediaActionModal(entry) {
         }
         const list = Array.isArray(res.candidates) ? res.candidates : (Array.isArray(res.results) ? res.results : []);
         if (!list.length) {
-          subResultHolder.appendChild(emptyState(t('未找到匹配字幕。', '没有搜到字幕'), t('可以尝试精简搜索词再试一次。', '试着删掉几个字再搜搜看。')));
+          subResultHolder.appendChild(emptyState({
+          title: t('未找到匹配字幕。', '没有搜到字幕'),
+          hint: t('可以尝试精简搜索词再试一次。', '试着删掉几个字再搜搜看。'),
+          action: { label: t('重试', '再搜一次'), onClick: () => doSearch() },
+        }));
           return;
         }
 
@@ -1231,9 +1346,10 @@ function fmtCell(value, key) {
   if (value === false) return '否';
   if (value === null || value === undefined) return '';
   const k = String(key || '');
-  if (k === 'size_bytes' || k === 'size') return fmtSize(value);
-  if (k === 'mtime' || k.endsWith('_at')) return fmtTime(value);
-  if (k === 'duration_seconds' || k === 'duration_ms') return k === 'duration_ms' ? (Number(value) / 1000).toFixed(1) + 's' : fmtDuration(value);
+  if (k === 'size_bytes' || k === 'size' || k === '大小') return fmtSize(value);
+  if (k === 'mtime' || k.endsWith('_at') || k.endsWith('时间')) return fmtTime(value);
+  if (k === 'duration_seconds' || k === 'duration_ms' || k === '时长') return k === 'duration_ms' ? (Number(value) / 1000).toFixed(1) + 's' : fmtDuration(value);
+  if (k === '耗时') return (Number(value) / 1000).toFixed(1) + 's';
   if (k === 'percent_used') return Number(value).toFixed(1) + '%';
   if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(2);
   const text = String(value);
@@ -1357,37 +1473,54 @@ function initUiMode() {
   });
 }
 
-function errorBox(error) {
+// 错误码 → 主行动按钮：能补配置就去配置，能重试就重试，避免只会说「失败了」
+function errorAction(code, retry) {
+  if (/^(access_denied|permission_denied|not_configured|site_disabled|auth_failed|config_error|write_disabled)$/.test(code)) {
+    const target = code === 'access_denied' || code === 'permission_denied' ? '去配置打开权限' : '去配置检查设置';
+    return { label: t(target, target), onClick: () => { location.hash = '#/config'; } };
+  }
+  if (code === 'unauthorized' || code === 'csrf') {
+    return { label: t('重新登录', '重新登录'), onClick: () => { location.href = '/login'; } };
+  }
+  if (typeof retry === 'function') return { label: t('重试', '再试一次'), onClick: retry };
+  return { label: t('重试', '刷新再试'), onClick: () => route() };
+}
+
+// 统一失败态：人话主文案 + 一个主行动按钮，技术错误码/原始信息折叠到「详情」
+function errorBox(error, opts = {}) {
   if (typeof error === 'string') error = { code: error, message: error };
-  const box = el('div', 'error-box');
   const code = (error && error.code) || 'error';
   const message = (error && error.message) || '未知错误';
-  const extras = Object.entries(error || {}).filter(([k, v]) => !['code', 'message'].includes(k) && v != null);
+  const extras = Object.fromEntries(Object.entries(error || {}).filter(([k, v]) => !['code', 'message'].includes(k) && v != null));
   const friendly = pick(FRIENDLY.err, code, null);
-  if (friendly) {
-    box.appendChild(el('b', null, friendly));
-    if (message && message !== friendly) box.appendChild(document.createTextNode('：' + message));
-    const detail = el('details', 'tech-detail');
-    detail.appendChild(el('summary', null, '技术详情'));
-    const pre = el('pre', 'json');
-    pre.textContent = JSON.stringify(Object.fromEntries([['code', code], ...extras]), null, 2);
-    detail.appendChild(pre);
-    box.appendChild(detail);
-    return box;
+  // 有些后端把「站点没开启」报成 invalid_arguments，靠消息里的开关/密钥线索改判为未配置
+  const configIssue = /(enabled=false|未启用|未配置|not configured|api_key|请配置)/i.test(message || '');
+  let title = configIssue ? t('这个功能还没配置好', '这个功能还没配置好') : (friendly || t('这次没有完成', '这次没有成功'));
+  let hint = '';
+  if (configIssue) {
+    hint = t('到「配置」页把对应的开关或密钥填上，再回来试。', '到「配置」页把对应的开关或密钥填上，再回来试。');
+  } else if (friendly) {
+    if (message && message !== friendly && message !== title) hint = message;
+  } else {
+    hint = t('可以直接重试；如果反复出现，展开「详情」查看错误信息。', '可以先再试一次；如果一直不行，展开「详情」看看原因。');
   }
-  box.appendChild(el('b', null, code));
-  box.appendChild(document.createTextNode(' · ' + message));
-  if (extras.length) {
-    const pre = el('pre', 'json');
-    pre.textContent = JSON.stringify(Object.fromEntries(extras), null, 2);
-    box.appendChild(pre);
-  }
-  return box;
+  const action = configIssue
+    ? { label: t('去配置检查设置', '去配置检查设置'), onClick: () => { location.hash = '#/config'; } }
+    : errorAction(code, opts.retry);
+  return emptyState({
+    title: title,
+    hint: hint,
+    icon: '⚠',
+    tone: 'err',
+    action: action,
+    details: { code: code, message: message, ...extras },
+    detailsLabel: t('详情', '详情'),
+  });
 }
 
 function rawDetails(data) {
   const details = el('details', 'raw');
-  details.appendChild(el('summary', null, t('查看原始 JSON', '技术详情（原始数据）')));
+  details.appendChild(el('summary', null, t('查看原始数据', '查看原始数据')));
   const pre = el('pre', 'json');
   pre.textContent = JSON.stringify(data, null, 2);
   details.appendChild(pre);
@@ -1463,12 +1596,31 @@ function setupNavDrawer() {
   });
 }
 
-// 统一的空状态：说明现在没什么 + 下一步能做什么
-function emptyState(title, hint) {
-  const box = el('div', 'empty');
-  box.appendChild(el('div', 'empty-ico', '◌'));
-  box.appendChild(el('strong', null, title));
+// 统一的空状态/失败态：说明现在是什么情况 + 一个可点的主行动按钮 + 可折叠的技术详情
+function emptyState(title, hint, opts = {}) {
+  if (title && typeof title === 'object') { opts = title; title = opts.title; hint = opts.hint; }
+  const box = el('div', 'empty' + (opts.tone ? ' empty-' + opts.tone : ''));
+  box.appendChild(el('div', 'empty-ico', opts.icon || '◌'));
+  box.appendChild(el('strong', null, title || ''));
   if (hint) box.appendChild(el('p', 'muted', hint));
+  const action = opts.action;
+  if (action && action.label) {
+    const btn = el('button', 'primary small empty-action', action.label);
+    btn.type = 'button';
+    btn.addEventListener('click', () => {
+      if (typeof action.onClick === 'function') action.onClick();
+      else if (action.page) location.hash = '#/' + action.page;
+    });
+    box.appendChild(btn);
+  }
+  if (opts.details) {
+    const det = el('details', 'tech-detail');
+    det.appendChild(el('summary', null, opts.detailsLabel || t('详情', '详情')));
+    const pre = el('pre', 'json');
+    pre.textContent = typeof opts.details === 'string' ? opts.details : JSON.stringify(opts.details, null, 2);
+    det.appendChild(pre);
+    box.appendChild(det);
+  }
   return box;
 }
 
@@ -1783,23 +1935,14 @@ function buildField(param, id, tool) {
       ? t('仅生成计划（dry_run）', '先看计划，不动文件')
       : pick(FRIENDLY.param, name, name)));
     field.appendChild(wrap);
-    if (param.description) field.appendChild(el('div', 'hint', param.description));
     return { field, input, param };
   }
   const selects = enumOptions(tool, name);
   const multi = !selects && isList && MULTI_ENUM[name] ? MULTI_ENUM[name]() : null;
   if (isList || multi) field.classList.add('wide');
   const displayName = isFilePath ? t('视频文件路径', '视频文件位置') : pick(FRIENDLY.param, name, name);
-  const lab = el('label', null, (param.description ? '' : displayName) + (param.required ? ' *' : ''));
+  const lab = el('label', null, displayName + (param.required ? ' *' : ''));
   lab.htmlFor = id;
-  if (!param.description) {
-    lab.textContent = displayName + (param.required ? ' *' : '');
-  } else {
-    lab.textContent = '';
-    lab.appendChild(el('span', null, displayName));
-    const req = el('span', 'req', ' *');
-    if (param.required) lab.appendChild(req);
-  }
   field.appendChild(lab);
   const ret = { field, input: null, param };
   let input;
@@ -1914,7 +2057,6 @@ function buildField(param, id, tool) {
     field.appendChild(input);
   }
   if (chips) field.appendChild(chips);
-  if (param.description) field.appendChild(el('div', 'hint', param.description));
   ret.input = input;
   return ret;
 }
@@ -2011,6 +2153,36 @@ function buildSelect(name, id, options, param, setInput, allowCustom = true) {
   return select;
 }
 
+// 一句话人话说明：优先用前端文案，缺省时退回后端 docstring 的第一行
+function toolSummary(name, spec) {
+  if (FRIENDLY.desc[name]) return FRIENDLY.desc[name];
+  const first = String((spec && spec.description) || '').split('\n')[0].trim();
+  return first || '';
+}
+
+// 技术信息：工具代号、后端 docstring、逐参数说明全部收进折叠项，卡片首屏只留人话
+function toolTechInfo(name, spec) {
+  const tech = el('details', 'tech-detail');
+  tech.appendChild(el('summary', null, '技术信息'));
+  tech.appendChild(el('code', null, name));
+  if (spec.description) {
+    const doc = el('pre', 'tech-doc', spec.description.trim());
+    tech.appendChild(doc);
+  }
+  const documented = (spec.params || []).filter((p) => p.description);
+  if (documented.length) {
+    const box = el('div', 'tech-params');
+    for (const p of documented) {
+      const row = el('div', 'tech-param');
+      row.appendChild(el('code', null, p.name));
+      row.appendChild(el('span', null, p.description));
+      box.appendChild(row);
+    }
+    tech.appendChild(box);
+  }
+  return tech;
+}
+
 function toolCard(name) {
   const spec = S.tools[name];
   const card = el('article', 'card tool-card');
@@ -2021,16 +2193,9 @@ function toolCard(name) {
   titleRow.appendChild(el('span', 'badge risk ' + spec.risk, pick(FRIENDLY.risk, spec.risk, spec.risk_label)));
   if (spec.long_running) titleRow.appendChild(el('span', 'badge warn', t('后台任务', '要多等一会儿')));
   left.appendChild(titleRow);
-  const desc = el('div', 'desc', spec.description || '');
+  const desc = el('div', 'desc', toolSummary(name, spec));
   if (desc.textContent) left.appendChild(desc);
-  if (IS_PRO()) {
-    left.appendChild(el('div', 'muted mono', name));
-  } else {
-    const tech = el('details', 'tech-detail');
-    tech.appendChild(el('summary', null, '技术信息'));
-    tech.appendChild(el('code', null, name));
-    left.appendChild(tech);
-  }
+  left.appendChild(toolTechInfo(name, spec));
   head.appendChild(left);
   card.appendChild(head);
 
@@ -2170,7 +2335,7 @@ function toolCard(name) {
       }
     } catch (err) {
       out.textContent = '';
-      out.appendChild(errorBox({ code: err.code || 'request_failed', message: err.message }));
+      out.appendChild(errorBox({ code: err.code || 'request_failed', message: err.message }, { retry: () => form.requestSubmit() }));
     } finally {
       submit.disabled = false;
       submit.removeAttribute('aria-busy');
@@ -2185,15 +2350,28 @@ async function pollJob(id, out) {
   for (let i = 0; i < 900; i += 1) {
     const data = await api('/api/jobs/' + encodeURIComponent(id) + '?wait=20');
     job = data.job;
-    if (job.status === 'succeeded' || job.status === 'failed') return job;
+    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'canceled') return job;
     out.textContent = '';
     const waited = Math.round((Date.now() - started) / 1000);
+    const p = job.progress || {};
+    let stageText = '';
+    if (p.label || p.stage) {
+      stageText = p.label || p.stage;
+      if (p.total) stageText += ` ${p.done || 0}/${p.total}`;
+      else if (p.done) stageText += ` 已处理 ${p.done}`;
+      stageText += ' · ';
+    }
     out.appendChild(spinner(IS_PRO()
-      ? `任务 ${job.id} · ${job.status} · 已等待 ${waited}s`
-      : `正在处理 · ${FRIENDLY.job[job.status] || job.status} · 已等待 ${waited} 秒`));
+      ? `任务 ${job.id} · ${job.status} · ${stageText}已等待 ${waited}s`
+      : `正在处理 · ${FRIENDLY.job[job.status] || job.status} · ${stageText}已等待 ${waited} 秒`));
     if (Date.now() - started > 1000 * 60 * 60) break;
   }
   return job || { status: 'failed', error: { code: 'timeout', message: '等待任务结果超时' } };
+}
+
+// 部分结果以任务结果里的 canceled/partial 标记为准，不用状态推断
+function jobPartial(job) {
+  return !!(job && job.result && (job.result.canceled === true || job.result.partial === true));
 }
 
 // 同一个工具勾了多个文件夹时：逐个子目录执行，结果按文件夹分段展示
@@ -2218,7 +2396,7 @@ async function runBatch(name, spec, args, pathName, paths, out) {
         const created = await api('/api/jobs', { method: 'POST', body: { tool: name, args: one } });
         pollJobsIndicator();
         const job = await pollJob(created.job.id, body);
-        result = job.status === 'succeeded' && job.result
+        result = (job.status === 'succeeded' || job.status === 'canceled') && job.result
           ? job.result
           : { ok: false, error: job.error || { code: job.status, message: '任务未成功' } };
       } else {
@@ -2242,7 +2420,14 @@ async function runBatch(name, spec, args, pathName, paths, out) {
 // ---------------------------------------------------------------- 结果渲染
 function renderResult(result, out, ctx = null) {
   out.textContent = '';
-  if (!result) { out.appendChild(el('p', 'muted', t('没有返回结果', '没有返回内容'))); return; }
+  if (!result) {
+    out.appendChild(emptyState({
+      title: t('没有返回结果', '这次没有拿到结果'),
+      hint: t('工具没有返回内容，可以重试一次。', '工具没有返回内容，可以再试一次。'),
+      action: { label: t('重试', '再试一次'), onClick: () => route() },
+    }));
+    return;
+  }
   if (result.ok === false) {
     const err = typeof result.error === 'string'
       ? { code: result.error, message: result.message || result.error }
@@ -2255,7 +2440,8 @@ function renderResult(result, out, ctx = null) {
   head.appendChild(el('span', 'badge ok', t('完成', '搞定')));
   if (result.duration_ms != null) head.appendChild(el('span', 'badge', (Number(result.duration_ms) / 1000).toFixed(2) + ' s'));
   if (result.job) head.appendChild(el('span', 'badge', t('任务 ' + (result.job.id || ''), '来自后台任务')));
-  head.appendChild(copyButton(() => JSON.stringify(result, null, 2), t('复制结果 JSON', '复制原始数据')));
+  // 友好版不常驻复制按钮；原始数据在最后的「查看原始数据」折叠里
+  if (IS_PRO()) head.appendChild(copyButton(() => JSON.stringify(result, null, 2), t('复制结果 JSON', '复制原始数据')));
   out.appendChild(head);
 
   if (result.summary && typeof result.summary === 'object') {
@@ -2280,12 +2466,21 @@ function renderResult(result, out, ctx = null) {
 
   const arrays = [];
   const scalars = [];
+  const emptyLists = [];
+  // 这些数组为空就是「这件事没有结果」，要用带行动按钮的空状态，而不是一行「（没有内容）」
+  const MEANINGFUL_EMPTY = new Set(['results', 'candidates', 'entries', 'shows', 'groups', 'suspects',
+    'duplicate_groups', 'items', 'files', 'plan', 'plans', 'executed', 'failed_items', 'site_attempts']);
   for (const [key, value] of Object.entries(result)) {
     if (['ok', 'summary', 'duration_ms', 'job'].includes(key)) continue;
     if (Array.isArray(value)) {
-      if (value.length && typeof value[0] === 'object' && value[0] !== null) arrays.push([key, value]);
-      else if (value.length) scalars.push([key, value]);
-      else scalars.push([key, value]);
+      if (!value.length) {
+        if (MEANINGFUL_EMPTY.has(key)) emptyLists.push(key);
+        else scalars.push([key, value]);
+      } else if (typeof value[0] === 'object' && value[0] !== null) {
+        arrays.push([key, value]);
+      } else {
+        scalars.push([key, value]);
+      }
     } else if (value && typeof value === 'object') {
       if (key === 'error') continue;
       scalars.push([key, value]);
@@ -2295,19 +2490,47 @@ function renderResult(result, out, ctx = null) {
   }
 
   if (scalars.length) out.appendChild(renderKv(scalars));
+  for (const key of emptyLists) {
+    const searching = /results|candidates|site_attempts/.test(key);
+    out.appendChild(emptyState({
+      title: searching ? t('没有找到结果。', '没有找到结果') : t('这里现在没有内容。', '这里现在没有内容'),
+      hint: searching
+        ? t('换个关键词，或调整筛选条件再试一次。', '换个词，或者放宽条件再试一次。')
+        : t('换个位置或条件再试一次。', '换个位置或条件再试一次。'),
+      action: emptyActionForTool(ctx && ctx.tool),
+    }));
+  }
   for (const [key, arr] of arrays) {
-    const opts = {};
+    const opts = { tool: ctx && ctx.tool };
     if (key === 'results') {
-      // 资源搜索结果：只放 5 个能决定「要不要下」的列，其余字段（磁力/网盘地址、
-      // 置信度、来源标记、告警）全部进「详情」抽屉。
+      // 按行结构分派：只有真正的资源搜索形状才用 5 列 + 来源筛选；
+      // 画质、产地、磁力、网盘等结果各用匹配自己结构的列。
+      const kind = resultKind(ctx && ctx.tool, arr);
+      opts.kind = kind;
       const q = (ctx && ctx.args && ctx.args.query) || result.query || '';
-      opts.columns = ['标题', '来源', '大小', '做种', '相关性'];
       opts.query = q;
-      opts.filterable = true;
-      opts.note = q
-        ? t(`相关性 = 来源站标记 + 标题是否命中「${q}」`, `相关性依据：来源站的标记，以及标题里有没有「${q}」`)
-        : '';
+      if (kind === 'search') {
+        // 只放 5 个能决定「要不要下」的列，其余字段（磁力/网盘地址、
+        // 置信度、来源标记、告警）全部进「详情」抽屉。
+        opts.filterable = true;
+        opts.note = q
+          ? t(`相关性 = 片名/年份/季集匹配 + 做种数/体积合理性；网盘按实时探测`, `相关性依据：片名、年份、季集对不对得上，以及做种数和体积是否合理；网盘以实时探测为准`)
+          : '';
+      }
+      // 资源搜索结果（含磁力/网盘/直链）统一分页，不静默截断
+      if (['search', 'links', 'magnet', 'pan'].includes(kind)) {
+        opts.paged = true;
+        opts.pageSize = 40;
+      }
     }
+    // 媒体列表 / 画质结果：固定列宽自适应容器，窄宽度不出横向滚动条；
+    // 被收起的字段（音轨明细、完整路径、mtime、位深/码率等）放进行内展开。
+    if (key === 'videos' || (key === 'results' && opts.kind === 'quality')) {
+      opts.fit = true;
+      opts.detail = (src) => mediaDetail(src, key === 'videos' ? 'videos' : 'quality');
+    }
+    const hinted = arrayColumns(key, arr, opts.kind);
+    if (hinted) opts.columns = hinted;
     const rowFn = ctx && HANDOFFS_ROWS[ctx.tool] && HANDOFFS_ROWS[ctx.tool][key];
     if (rowFn) {
       opts.handoff = (src, row) => {
@@ -2391,18 +2614,685 @@ function titleHit(query, title) {
   return { hit, total: tokens.length };
 }
 
-// 相关性只做两件可解释的事：来源站给出的标记 + 标题里是否出现搜索词
+// 相关性跟随后端证据口径：
+//   high/partial/suspicious/mismatch/unverified 分别对应「高相关 / 部分命中 /
+//   元数据可疑 / 不匹配 / 无法判定」；verified 只在网盘实时探测为真时出现。
+// 老结果没有 confidence 时，才退回「标题是否命中」的客户端判断。
+function relevanceEvidence(text) {
+  return String(text || '')
+    .replace(/[；;]\s*磁力未校验实际内容[^；;]*$/, '')
+    .replace(/^标题完整匹配（(?:片名|别名)「[^」]+」）/, '')
+    .replace(/^标题不匹配[：:]?/, '')
+    .replace(/^部分命中，?缺少/, '缺少')
+    .replace(/^[；;、：:\s]+/, '')
+    .trim();
+}
+
 function relevanceText(row, query) {
-  if (row.mismatch) return '⚠ 可能不匹配';
-  if (row.warning) return '⚠ ' + String(row.warning);
+  const conf = String(row.confidence || '');
+  const reason = relevanceEvidence(row.warning);
+  if (row.mismatch || conf === 'mismatch') {
+    return '⚠ 不匹配' + (reason ? '：' + reason : '');
+  }
+  if (conf === 'high') {
+    return row.verified ? '高 · 已验证' : '高（仅标题匹配）';
+  }
+  if (conf === 'suspicious') {
+    return '⚠ 可疑' + (reason ? '：' + reason : '，标题匹配但元数据异常');
+  }
+  if (conf === 'partial') {
+    return '部分命中' + (reason ? '：' + reason : '');
+  }
+  if (conf === 'unverified') {
+    return '无法判定' + (reason ? '：' + reason : '');
+  }
+  if (conf === 'medium' || conf === 'low') {
+    return ({ medium: '中', low: '低' }[conf]) + (row.verified ? ' · 已验证' : '');
+  }
   const m = titleHit(query, row.title);
   if (m) {
     if (m.hit.length === m.total) return '命中 ' + m.total + '/' + m.total;
     if (m.hit.length) return '部分命中 ' + m.hit.length + '/' + m.total + '（缺「' + queryTokens(query).filter((tk) => !m.hit.includes(tk)).join('、') + '」）';
     return '未命中标题';
   }
-  const conf = { high: '高', medium: '中', low: '低' }[String(row.confidence || '')] || row.confidence || '';
-  return conf + (row.verified ? ' · 已验证' : '');
+  return '';
+}
+
+// ---------------------------------------------------------------- 结果结构识别
+// 结果渲染按「行结构」分派，绝不假设所有工具都返回资源搜索表。
+// 工具提示只用于消除结构相近的歧义（如裸 url 是影片页还是网盘页）；
+// 结构不符时一律退回通用渲染。
+const RESULT_KIND_BY_TOOL = {
+  media_search: 'search',
+  jackett_search: 'search',
+  seedhub_search: 'links',
+  seedhub_magnets: 'magnet',
+  seedhub_pans: 'pan',
+  dysbk_search: 'links',
+  media_quality_analyze: 'quality',
+  nas_classify_region: 'region',
+};
+
+function ratioOf(rows, key) {
+  if (!rows.length) return 0;
+  const hit = rows.filter((r) => r && typeof r === 'object'
+    && r[key] !== undefined && r[key] !== null && r[key] !== '').length;
+  return hit / rows.length;
+}
+
+function detectResultKind(arr) {
+  const rows = arr.filter((r) => r && typeof r === 'object' && !Array.isArray(r));
+  if (!rows.length || rows.length !== arr.length) return 'generic';
+  const cov = (k) => ratioOf(rows, k);
+  if (cov('title') < 0.5) return 'generic';
+  if (cov('quality_score') >= 0.5 && cov('resolution') >= 0.5) return 'quality';
+  if (cov('region') >= 0.5) return 'region';
+  if (cov('magnet') >= 0.5 && cov('source') < 0.5 && cov('seeders') < 0.5) return 'magnet';
+  if ((cov('pan_url') >= 0.5 || cov('host') >= 0.5) && cov('magnet') < 0.5) return 'pan';
+  if (cov('source') >= 0.5 || cov('seeders') >= 0.3) return 'search';
+  return 'generic';
+}
+
+function resultKind(tool, arr) {
+  const rows = arr.filter((r) => r && typeof r === 'object' && !Array.isArray(r));
+  if (!rows.length || rows.length !== arr.length) return 'generic';
+  const hint = RESULT_KIND_BY_TOOL[tool];
+  if (hint) {
+    if (hint === 'search' && ratioOf(rows, 'title') < 0.5) return 'generic';
+    if (hint === 'quality' && ratioOf(rows, 'quality_score') < 0.5) return 'generic';
+    if (hint === 'region' && ratioOf(rows, 'region') < 0.5) return 'generic';
+    return hint;
+  }
+  return detectResultKind(arr);
+}
+
+// 指定列：只列真正有值的列，缺字段时由 renderTable 自动剔除
+function arrayColumns(key, arr, kind) {
+  if (key === 'results') {
+    if (kind === 'search') return ['标题', '来源', '大小', '做种', '相关性'];
+    if (kind === 'quality') return ['名称', '分辨率', '编码', '画质', '音轨', '大小', '评级'];
+    if (kind === 'region') return ['名称', '产地', '置信度', '音轨语言', '探测'];
+    if (kind === 'magnet') return ['标题', '大小', '磁力', '更新时间'];
+    if (kind === 'pan') return ['标题', '网盘', '链接', '核验', '更新时间', '提示'];
+    if (kind === 'links') return ['标题', 'ID', '链接'];
+    return null;
+  }
+  if (key === 'videos') return ['名称', '分辨率', '编码', '画质', '音轨', '大小', '中字'];
+  if (key === 'candidates') {
+    const sample = arr.find((x) => x && typeof x === 'object') || {};
+    if ('canonical_title' in sample || 'tmdb_id' in sample) {
+      return ['标题', '原名', '年份', '类型', 'TMDB ID', '语言', '产地'];
+    }
+    return ['标题', '站点', '评分', '格式', '语言', '整季包', '发布名'];
+  }
+  if (key === 'matches') {
+    const sample = arr.find((x) => x && typeof x === 'object') || {};
+    if ('parsed' in sample) return ['名称', '标题', '年份', '季', '集', '分辨率', '大小', '路径'];
+    return ['名称', '类型', '类别', '扩展名', '大小', '修改时间', '相对路径'];
+  }
+  if (key === 'shows') return ['标题', '年份', '季', '应有集数', '实有集数', '缺失集', '说明'];
+  if (key === 'groups' || key === 'suspects' || key === 'duplicate_groups') return ['标题', '年份', '类型', '成员数', '最佳版本', '时长矛盾'];
+  if (key === 'multi_root_shows') return ['标题', '类型', 'TMDB ID', '根数', '剧目根'];
+  if (key === 'seasons') return ['剧名', '季', '总集数', '缺失', '策略', '计划', '已补', '失败', '跳过'];
+  if (key === 'plan') return ['动作', '类型', '级别', '源', '目标', '原因', '置信度'];
+  if (key === 'plans') return ['视频', '目标文件', '策略', '已有字幕', '外挂字幕数', '新增音轨数'];
+  if (key === 'executed') return ['视频', '目标文件', '策略', '已有字幕', '外挂字幕数', '新增音轨数'];
+  if (key === 'errors') {
+    const sample = arr.find((x) => x && typeof x === 'object') || {};
+    if ('video_path' in sample) return ['视频', '目标文件', '错误'];
+    if ('site' in sample) return ['站点', '错误'];
+    if ('reason' in sample && !('error' in sample)) return ['路径', '原因'];
+    return ['路径', '错误'];
+  }
+  if (key === 'failed_items') return ['类型', '路径', '恢复到', '状态', '原因'];
+  if (key === 'site_attempts') return ['站点', '状态', '结果数', '最高分', '说明'];
+  if (key === 'items') {
+    const sample = arr.find((x) => x && typeof x === 'object') || {};
+    if ('classification' in sample || 'cleanup_allowed' in sample) {
+      return ['路径', '大小', '分类', '动作', '可清理', '保护原因', '匹配规则'];
+    }
+    if ('restore_to' in sample) return ['类型', '路径', '恢复到', '状态', '原因'];
+    if ('container' in sample || 'has_video_stream' in sample) {
+      return ['名称', '路径', '状态', '探测', '原因', '容器', '时长', '大小'];
+    }
+    return null;
+  }
+  return null;
+}
+
+const REGION_TEXT = { domestic: '国产', non_domestic: '非国产', unknown: '未知' };
+const QUALITY_TIER_TEXT = { excellent: '优秀', good: '良好', fair: '一般', poor: '较差', bad: '差', unknown: '未知' };
+const PLAN_ACTION_TEXT = {
+  move: '移动', skip: '跳过', identical: '已一致', duplicate: '重复',
+  conflict: '冲突', blocked: '受限', cleanup_dir: '清理空目录',
+};
+const CLEANUP_ACTION_TEXT = { delete: '删除', review: '待确认', keep: '保留' };
+const CLEANUP_PROTECT_TEXT = {
+  not_media_junk: '不是垃圾文件',
+  protected_by_skip_pattern: '命中排除规则',
+  protected_by_special_dir_names: '位于特殊目录（样本/花絮）',
+  active_download_grace: '可能正在下载',
+  file_in_use: '文件被占用',
+  file_status_unknown: '无法确认是否占用，默认保护',
+};
+const FILL_STRATEGY_TEXT = { pack: '整季包', individual: '逐集', skipped: '跳过' };
+const MISSING_REASON_TEXT = {
+  expected_episode_set_unavailable: '未启用 TMDB/TVmaze，无法判断应有多少集',
+};
+const CLEANUP_CLASS_TEXT = { media: '媒体', media_junk: '垃圾文件', personal_video: '个人视频', unknown: '未知' };
+const INTEGRITY_STATUS_TEXT = { healthy: '健康', corrupted: '损坏', warning: '可疑', unknown: '未探明', incomplete: '不完整' };
+const ROLLBACK_STATUS_TEXT = {
+  rollback_ready: '可回滚', rolled_back: '已回滚', partially_rolled_back: '部分回滚',
+  rollback_conflict: '回滚冲突', rollback_unsupported: '不支持回滚', permission_denied: '没有权限',
+  not_found: '未找到', failed: '失败', nothing_to_rollback: '没有可回滚内容',
+};
+const SITE_ATTEMPT_STATUS_TEXT = {
+  ok: '有结果', no_results: '确认无结果', error: '出错', stopped_early: '已提前停止',
+};
+
+function fileNameOf(path) {
+  const text = String(path || '');
+  const idx = text.lastIndexOf('/');
+  return idx >= 0 ? text.slice(idx + 1) : text;
+}
+
+function shortSize(value) {
+  if (value === undefined || value === null || value === '') return '';
+  // 后端有的结果给字节数，有的给已格式化字符串；fmtSize 对两者都能处理
+  return fmtSize(value);
+}
+
+// ---------------------------------------------------------------- 媒体规格标签
+// ffprobe 维度 → 紧凑标签（DV P8.1 / HDR10+ / Atmos·TrueHD 7.1 / DTS:X）。
+// 新结果带结构字段；老任务结果只有 hdr_format / dv_profile / has_atmos，按旧形状回退。
+const CODEC_TEXT = {
+  hevc: 'HEVC', h265: 'HEVC', h264: 'AVC', avc: 'AVC', av1: 'AV1', vp9: 'VP9',
+  mpeg4: 'MPEG-4', xvid: 'XviD', divx: 'XviD', vc1: 'VC-1',
+  truehd: 'TrueHD', eac3: 'DD+', ac3: 'AC-3', dts: 'DTS', aac: 'AAC',
+  flac: 'FLAC', opus: 'Opus', vorbis: 'Vorbis', mp3: 'MP3',
+};
+
+function codecLabel(raw, bitDepth) {
+  const text = String(raw || '');
+  const base = CODEC_TEXT[text.toLowerCase()] || text.toUpperCase() || '';
+  const bit = Number(bitDepth) > 0 ? Number(bitDepth) + 'bit' : '';
+  return [base, bit].filter(Boolean).join(' ');
+}
+
+function fmtBitRate(bps) {
+  const n = Number(bps);
+  if (!isFinite(n) || n <= 0) return '';
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 10e6 ? 0 : 1) + ' Mbps';
+  return Math.round(n / 1000) + ' kbps';
+}
+
+function fmtSampleRate(hz) {
+  const n = Number(hz);
+  return isFinite(n) && n > 0 ? (n / 1000).toFixed(n % 1000 ? 1 : 0) + ' kHz' : '';
+}
+
+function dvShort(video) {
+  if (!video) return '';
+  const isDv = !!video.dolby_vision || video.dv_profile != null
+    || /dolby vision/i.test(String(video.hdr_format || video.hdr || ''));
+  if (!isDv) return '';
+  const profile = video.dv_profile_label
+    || (video.dv_profile != null ? 'Profile ' + video.dv_profile : '');
+  return profile ? 'DV ' + profile.replace(/^Profile\s*/i, 'P') : 'DV';
+}
+
+function rangeLabel(video, probed) {
+  if (!video) return '';
+  const legacy = typeof video.hdr === 'string' ? video.hdr : '';
+  const legacyFormat = String(video.hdr_format || legacy || '');
+  const tags = [];
+  const push = (tag) => { if (tag && !tags.includes(tag)) tags.push(tag); };
+  if (Array.isArray(video.hdr_types) && video.hdr_types.length) {
+    for (const item of video.hdr_types) push(item === 'Dolby Vision' ? dvShort(video) : item);
+  } else {
+    push(dvShort(video));
+    if (video.hdr10_plus) push('HDR10+');
+    if (video.hdr10) push('HDR10');
+    if (video.hlg) push('HLG');
+    if (!tags.length && legacyFormat) {
+      for (const part of legacyFormat.split(/\s+\+\s+/)) {
+        if (/dolby vision/i.test(part)) push(dvShort(video) || 'DV');
+        else if (/hdr10\+/i.test(part)) push('HDR10+');
+        else if (/hdr10/i.test(part)) push('HDR10');
+        else if (/hlg/i.test(part)) push('HLG');
+        else push(part);
+      }
+    }
+    if (!tags.length && video.hdr === true) push(legacyFormat || 'HDR');
+  }
+  if (!tags.length && (video.sdr === true || probed)) push('SDR');
+  return tags.join(' · ');
+}
+
+function channelLayout(a) {
+  const text = String(a.channel_layout_label || a.channel_layout || '')
+    .replace(/\(.*?\)/g, '').trim();
+  if (text) return text;
+  const n = Number(a.channels);
+  if (!n) return '';
+  return { 1: '1.0', 2: '2.0', 6: '5.1', 8: '7.1' }[n] || n + '声道';
+}
+
+function audioTrackSummary(a) {
+  if (!a) return '';
+  const profile = String(a.profile || '');
+  const title = String(a.title || '');
+  const blob = (profile + ' ' + title).toLowerCase();
+  const codec = String(a.codec || '').toLowerCase();
+  let tag;
+  const atmos = !!a.atmos || (/atmos|joc/.test(blob) && ['truehd', 'eac3', 'ac3'].includes(codec));
+  if (atmos) {
+    const type = a.atmos_type || (codec === 'truehd' ? 'TrueHD Atmos' : 'DD+ JOC');
+    tag = 'Atmos·' + (type === 'TrueHD Atmos' ? 'TrueHD' : 'DD+');
+  } else if (a.dts_x || /dts[:\-\s]?x/.test(blob)) {
+    tag = 'DTS:X';
+  } else if (a.dts_profile && /DTS-HD/.test(a.dts_profile)) {
+    tag = a.dts_profile;
+  } else if (codec === 'dts' && /ma/.test(blob)) {
+    tag = 'DTS-HD MA';
+  } else if (codec === 'dts' && /hd/.test(blob)) {
+    tag = 'DTS-HD';
+  } else {
+    tag = a.codec_label || CODEC_TEXT[codec] || codec.toUpperCase();
+  }
+  const layout = channelLayout(a);
+  return [tag, layout].filter(Boolean).join(' ');
+}
+
+function pickAudioTrack(tracks) {
+  if (!Array.isArray(tracks) || !tracks.length) return null;
+  const immersive = tracks.find((a) => a && (a.atmos || a.dts_x
+    || /atmos|dts[:\-\s]?x/i.test(String(a.profile || '') + ' ' + String(a.title || ''))));
+  if (immersive) return immersive;
+  return tracks.slice().sort((a, b) => {
+    const ca = Number(a && a.channels) || 0;
+    const cb = Number(b && b.channels) || 0;
+    return cb - ca;
+  })[0];
+}
+
+function audioSummary(tracks) {
+  const best = pickAudioTrack(tracks);
+  if (!best) return '';
+  const tag = audioTrackSummary(best);
+  const extra = tracks.length - 1;
+  return tag + (extra > 0 ? ' +' + extra : '');
+}
+
+function qualityAudioSummary(v) {
+  if (Array.isArray(v.audio_details) && v.audio_details.length) return audioSummary(v.audio_details);
+  if (Array.isArray(v.audio) && v.audio.length && typeof v.audio[0] === 'object') return audioSummary(v.audio);
+  const codec = String(v.audio_codec || '');
+  let tag = codec;
+  if (v.has_atmos) {
+    const kind = codec === 'TrueHD' ? 'TrueHD' : (codec === 'E-AC-3' ? 'DD+' : '');
+    tag = 'Atmos' + (kind ? '·' + kind : '');
+    if (!kind) tag += ' ' + codec;
+  }
+  const layout = channelLayout({ channels: v.audio_channels, channel_layout: v.audio_channels });
+  return [tag, layout].filter(Boolean).join(' ');
+}
+
+function ratingLabel(score, tier) {
+  const text = QUALITY_TIER_TEXT[tier] || tier || '';
+  const value = score === undefined || score === null || score === '' ? '' : score;
+  return [text, value].filter(Boolean).join(' ');
+}
+
+function searchRows(arr, opts = {}) {
+  return arr.map((r) => ({
+    标题: r.title || r.name || '',
+    来源: r.source || r.indexer || '',
+    大小: shortSize(r.size),
+    做种: r.seeders === undefined || r.seeders === null ? '' : r.seeders,
+    相关性: relevanceText(r, opts.query || ''),
+  }));
+}
+
+function qualityRows(arr) {
+  return arr.map((v) => {
+    const detail = v.video_details || null;
+    return {
+      名称: v.name || fileNameOf(v.path),
+      分辨率: v.resolution || (detail && detail.resolution) || '',
+      编码: codecLabel(v.video_codec || (detail && detail.codec), v.bit_depth || (detail && detail.bit_depth)),
+      画质: rangeLabel(detail || { hdr: v.hdr, hdr_format: v.hdr }, v.probe_ok),
+      音轨: qualityAudioSummary(v),
+      大小: shortSize(v.size_bytes),
+      评级: ratingLabel(v.quality_score, v.quality_tier),
+    };
+  });
+}
+
+// 行内展开/详情抽屉：把主表里收起来的字段在这里完整展示（含 ffprobe 技术规格）
+function hasDolbyVision(video) {
+  return !!video && (!!video.dolby_vision || video.dv_profile != null
+    || /dolby vision/i.test(String(video.hdr_format || video.hdr || '')));
+}
+
+function addVideoSpecDetail(video, add, probed, fallbackBitRate) {
+  if (!video) return;
+  add('视频编码', codecLabel(video.codec, video.bit_depth));
+  add('编码 Profile', video.profile);
+  if (video.width && video.height) add('实际画幅', video.width + '×' + video.height);
+  add('像素格式', video.pixel_format);
+  add('位深', video.bit_depth ? video.bit_depth + ' bit' : '');
+  add('帧率', video.fps ? video.fps + ' fps' : '');
+  if (video.bit_rate) add('视频码率', fmtBitRate(video.bit_rate));
+  else if (fallbackBitRate) add('整体码率', fmtBitRate(fallbackBitRate));
+  add('HDR 类型', rangeLabel(video, probed));
+  if (hasDolbyVision(video)) {
+    add('杜比视界', video.dv_profile_label || '是');
+    add('DV 兼容层', video.dv_compatibility_label);
+    add('DV 层结构', video.dv_layers);
+    add('DV 等级', video.dv_level);
+    add('DV 兼容标识（dv_bl_signal_compatibility_id）', video.dv_bl_signal_compatibility_id);
+  } else if (probed) {
+    add('杜比视界', '否');
+  }
+  add('色彩空间', video.color_space);
+  add('色域', video.color_primaries);
+  add('传输特性', video.color_transfer);
+}
+
+function addAudioTrackDetail(tracks, add) {
+  const list = Array.isArray(tracks) ? tracks : [];
+  if (!list.length) return;
+  list.forEach((a, i) => {
+    if (!a || typeof a !== 'object') return;
+    const parts = [
+      a.language ? String(a.language) : '',
+      audioTrackSummary(a),
+      fmtBitRate(a.bit_rate),
+      fmtSampleRate(a.sample_rate),
+      a.bit_depth ? a.bit_depth + ' bit' : '',
+      a.title ? String(a.title) : '',
+    ].filter(Boolean);
+    add('音轨 ' + (i + 1), parts.join(' · '));
+  });
+}
+
+function mediaDetail(src, mode) {
+  const flat = {};
+  const add = (key, value) => {
+    if (value !== null && value !== undefined && value !== '') flat[key] = value;
+  };
+
+  if (mode === 'videos') {
+    const media = src.media || {};
+    const video = media.video || null;
+    const tracks = Array.isArray(media.audio) ? media.audio : [];
+    const sub = src.subtitle || {};
+    const ext = Array.isArray(sub.external) ? sub.external : [];
+    const emb = Array.isArray(sub.embedded) ? sub.embedded : [];
+    add('名称', src.name);
+    add('完整路径', src.path);
+    add('相对路径', src.relative_path);
+    add('大小', src.size_bytes);
+    add('修改时间', src.mtime);
+    if (src.name && src.name.includes('.')) add('扩展名', src.name.split('.').pop().toLowerCase());
+    add('时长', media.duration_seconds);
+    add('容器', media.container);
+    add('探测', src.probed ? '成功' : (src.probe_error ? '失败：' + src.probe_error : '未探测'));
+    if (src.media_type && src.media_type.type) {
+      add('媒体类型', [src.media_type.type,
+        src.media_type.confidence != null ? '置信度 ' + src.media_type.confidence : ''].filter(Boolean).join(' '));
+    }
+    addVideoSpecDetail(video, add, src.probed, media.bit_rate);
+    addAudioTrackDetail(tracks, add);
+    add('外挂字幕', ext.length
+      ? ext.map((s) => s.name + (Array.isArray(s.languages) && s.languages.length
+        ? '（' + s.languages.join('/') + '）' : '')).join('；')
+      : '');
+    add('内嵌字幕', emb.length
+      ? emb.map((s) => [s.language || '未知语言', s.codec,
+        s.forced ? 'forced' : '', s.title || ''].filter(Boolean).join(' ')).join('；')
+      : '');
+    add('中文字幕', src.has_chinese_subtitle
+      ? '有' + (Array.isArray(src.chinese_subtitle_sources) && src.chinese_subtitle_sources.length
+        ? '（' + src.chinese_subtitle_sources.join('、') + '）' : '')
+      : (src.probed ? '无' : '未探测'));
+    return renderDetail(flat);
+  }
+
+  const video = src.video_details || {
+    codec: src.video_codec,
+    bit_depth: src.bit_depth,
+    bit_rate: src.bit_rate,
+    hdr: src.hdr,
+    hdr_format: src.hdr,
+  };
+  const tracks = src.audio_details || src.audio || [];
+  add('名称', src.name);
+  add('完整路径', src.path);
+  add('大小', src.size_bytes);
+  add('时长', src.duration_seconds);
+  add('探测', src.probe_ok ? '成功' : (src.probe_error ? '失败：' + src.probe_error : '未探测'));
+  add('来源类型', src.source_type);
+  add('分辨率', src.resolution);
+  addVideoSpecDetail(video, add, src.probe_ok, src.bit_rate);
+  if (Array.isArray(tracks) && tracks.length) {
+    addAudioTrackDetail(tracks, add);
+  } else if (src.audio_codec || src.has_atmos) {
+    const legacyCodec = String(src.audio_codec || '').toLowerCase();
+    addAudioTrackDetail([{
+      codec: legacyCodec,
+      codec_label: src.audio_codec,
+      channels: src.audio_channels,
+      channel_layout: src.audio_channels,
+      atmos: src.has_atmos,
+      atmos_type: src.has_atmos
+        ? (src.audio_codec === 'TrueHD' ? 'TrueHD Atmos'
+          : (src.audio_codec === 'E-AC-3' ? 'DD+ JOC' : 'Atmos')) : null,
+    }], add);
+  }
+  add('评分', src.quality_score);
+  add('档位', QUALITY_TIER_TEXT[src.quality_tier] || src.quality_tier);
+  add('低质量', src.low_quality ? '是' : '');
+  return renderDetail(flat);
+}
+
+function regionRows(arr) {
+  return arr.map((v) => ({
+    名称: v.name || fileNameOf(v.path),
+    产地: REGION_TEXT[v.region] || v.region || '',
+    置信度: v.confidence === undefined || v.confidence === null ? '' : v.confidence,
+    音轨语言: Array.isArray(v.audio_languages) ? v.audio_languages.join('、') : '',
+    探测: v.probe_ok ? '成功' : '失败',
+  }));
+}
+
+function magnetRows(arr) {
+  return arr.map((m) => ({
+    标题: m.title || '',
+    大小: shortSize(m.size),
+    磁力: m.magnet || (m.resolve_failed ? '解析失败' : ''),
+    更新时间: m.updated || '',
+  }));
+}
+
+function panRows(arr) {
+  return arr.map((p) => ({
+    标题: p.title || '',
+    网盘: p.host || '',
+    链接: p.url || (p.resolve_failed ? '解析失败' : ''),
+    核验: p.verified ? '已验证' : (p.confidence || ''),
+    更新时间: p.updated || '',
+    提示: p.warning || (p.mismatch ? '可能不匹配' : ''),
+  }));
+}
+
+function linkRows(arr) {
+  return arr.map((x) => ({
+    标题: x.title || x.name || '',
+    ID: x.id === undefined || x.id === null ? '' : x.id,
+    链接: x.url || '',
+  }));
+}
+
+function showRows(arr) {
+  const eps = (list) => (Array.isArray(list) ? (list.length ? list.join('、') : '无') : '');
+  const count = (list) => (Array.isArray(list) ? list.length : '');
+  // 多季剧的 expected/actual/missing 是「跨季并集」，不是集数，
+  // 必须按季展开显示，否则会给出误导性的数字。
+  const perSeason = (s) => (Array.isArray(s.seasons) && s.seasons.length
+    ? s.seasons.map((ps) => {
+      const miss = Array.isArray(ps.missing)
+        ? (ps.missing.length ? ps.missing.map((e) => 'E' + e).join('、') : '无')
+        : '未知';
+      return 'S' + (ps.season === null || ps.season === undefined ? '?' : ps.season) + ': ' + miss;
+    }).join('；')
+    : '');
+  return arr.map((s) => {
+    const multi = Array.isArray(s.seasons) && s.seasons.length > 0;
+    return {
+      标题: s.title || '',
+      年份: s.year === undefined || s.year === null ? '' : s.year,
+      季: multi ? s.seasons.map((ps) => ps.season).filter((v) => v !== null).join('/') : (s.season === undefined || s.season === null ? '' : s.season),
+      应有集数: multi ? '' : count(s.expected),
+      实有集数: multi ? '' : count(s.actual),
+      缺失集: multi ? perSeason(s) : eps(s.missing),
+      说明: MISSING_REASON_TEXT[s.reason] || s.reason || (Array.isArray(s.partial_seasons) && s.partial_seasons.length
+        ? '部分季无法判断：S' + s.partial_seasons.join('、S') : ''),
+    };
+  });
+}
+
+function groupRows(arr) {
+  return arr.map((g) => {
+    const members = Array.isArray(g.members) ? g.members : [];
+    const best = members[g.best_index] || {};
+    return {
+      标题: g.title || '',
+      年份: g.year === undefined || g.year === null ? '' : g.year,
+      类型: g.media_type || '',
+      成员数: g.member_count === undefined || g.member_count === null ? members.length : g.member_count,
+      最佳版本: g.best_path || best.path || best.name || '',
+      时长矛盾: g.duration_mismatch ? '是' : '',
+    };
+  });
+}
+
+function multiRootRows(arr) {
+  return arr.map((m) => ({
+    标题: m.title || '',
+    类型: m.media_type || '',
+    'TMDB ID': m.tmdb_id === undefined || m.tmdb_id === null ? '' : m.tmdb_id,
+    根数: Array.isArray(m.roots) ? m.roots.length : '',
+    剧目根: Array.isArray(m.roots) ? m.roots.join('；') : '',
+  }));
+}
+
+function seasonRows(arr) {
+  const len = (v) => (Array.isArray(v) ? v.length : '');
+  return arr.map((s) => ({
+    剧名: s.title || '',
+    季: s.season === undefined || s.season === null ? '' : s.season,
+    总集数: s.total === undefined || s.total === null ? '' : s.total,
+    缺失: s.missing_count === undefined || s.missing_count === null ? len(s.missing) : s.missing_count,
+    策略: FILL_STRATEGY_TEXT[s.strategy] || s.strategy || '',
+    计划: len(s.planned),
+    已补: len(s.filled),
+    失败: len(s.failed),
+    跳过: len(s.skipped),
+  }));
+}
+
+function planRows(arr) {
+  return arr.map((i) => ({
+    动作: PLAN_ACTION_TEXT[i.action] || i.action || '',
+    类型: i.kind || '',
+    级别: i.level === undefined || i.level === null ? '' : i.level,
+    源: i.source || '',
+    目标: i.target || '',
+    原因: i.reason || '',
+    置信度: i.confidence === undefined || i.confidence === null ? '' : i.confidence,
+  }));
+}
+
+function itemRows(arr) {
+  const sample = arr.find((x) => x && typeof x === 'object') || {};
+  if ('classification' in sample || 'cleanup_allowed' in sample) {
+    return arr.map((i) => ({
+      路径: i.path || '',
+      大小: shortSize(i.size),
+      分类: CLEANUP_CLASS_TEXT[i.classification] || i.classification || '',
+      动作: CLEANUP_ACTION_TEXT[i.action] || i.action || '',
+      可清理: i.cleanup_allowed ? '是' : '否',
+      保护原因: CLEANUP_PROTECT_TEXT[i.protection_reason] || i.protection_reason || '',
+      匹配规则: i.matched_pattern || '',
+    }));
+  }
+  if ('restore_to' in sample) {
+    return arr.map((i) => ({
+      类型: i.type || '',
+      路径: i.path || '',
+      恢复到: i.restore_to || '',
+      状态: ROLLBACK_STATUS_TEXT[i.status] || (i.error ? '失败' : (i.status || '已回滚')),
+      原因: i.reason || i.error || '',
+    }));
+  }
+  return arr.map((i) => ({
+    名称: i.name || fileNameOf(i.path),
+    路径: i.path || '',
+    状态: INTEGRITY_STATUS_TEXT[i.status] || i.status || '',
+    探测: i.probe_ok ? '成功' : '失败',
+    原因: Array.isArray(i.reasons) ? i.reasons.join('、') : '',
+    容器: i.container || '',
+    时长: i.duration_seconds === undefined || i.duration_seconds === null ? '' : fmtDuration(i.duration_seconds),
+    大小: shortSize(i.size_bytes),
+  }));
+}
+
+function muxPlanRows(arr) {
+  return arr.map((m) => ({
+    视频: m.video_path || '',
+    目标文件: m.target_path || '',
+    策略: m.strategy || '',
+    已有字幕: m.existing_subtitles === undefined || m.existing_subtitles === null ? '' : m.existing_subtitles,
+    外挂字幕数: Array.isArray(m.external_subtitles) ? m.external_subtitles.length : '',
+    新增音轨数: Array.isArray(m.tracks) ? m.tracks.length : '',
+  }));
+}
+
+function errorsRows(arr) {
+  const sample = arr.find((x) => x && typeof x === 'object') || {};
+  if ('video_path' in sample) {
+    return arr.map((e) => ({
+      视频: e.video_path || '',
+      目标文件: e.target_path || '',
+      错误: e.error || e.code || '',
+    }));
+  }
+  if ('site' in sample) {
+    return arr.map((e) => ({
+      站点: e.site || e.source || '',
+      错误: e.message || e.error || e.code || '',
+    }));
+  }
+  if ('reason' in sample && !('error' in sample)) {
+    return arr.map((e) => ({ 路径: e.path || '', 原因: e.reason || '' }));
+  }
+  return arr.map((e) => ({
+    路径: e.path || '',
+    错误: e.error || e.message || e.code || '',
+  }));
+}
+
+function genericRow(row) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    return { [t('内容', '内容')]: row === undefined || row === null ? '' : String(row) };
+  }
+  const flat = flatten(row, '', 0, {});
+  const out = {};
+  for (const [k, v] of Object.entries(flat)) out[k] = v;
+  if (!Object.keys(out).length) out[t('内容', '内容')] = objectSummary(row);
+  return out;
 }
 
 function specialRows(key, arr, opts = {}) {
@@ -2411,40 +3301,72 @@ function specialRows(key, arr, opts = {}) {
       const media = v.media || {};
       const video = media.video || {};
       const audio = Array.isArray(media.audio) ? media.audio : [];
-      const audioText = audio.length
-        ? audio.map((a) => [a.language, a.codec, a.channels].filter(Boolean).join('/')).join('，')
-        : '';
       return {
         名称: v.name,
         分辨率: video.resolution || '',
-        编码: [video.codec, video.profile].filter(Boolean).join(' '),
-        HDR: video.hdr || video.hdr_format || video.dv_profile || '',
-        音轨: audioText,
-        中字: v.has_chinese_subtitle ? '有' : '无',
-        时长: media.duration_seconds,
+        编码: codecLabel(video.codec, video.bit_depth),
+        画质: rangeLabel(video, v.probed),
+        音轨: audioSummary(audio),
+        中字: v.has_chinese_subtitle ? '有' : (v.probed ? '无' : '未探测'),
         大小: v.size_bytes,
-        路径: v.relative_path || v.path,
       };
     });
   }
   if (key === 'results') {
-    return arr.map((r) => ({
-      标题: r.title || r.name || '',
-      来源: r.source || '',
-      大小: fmtSize(r.size),
-      做种: r.seeders,
-      相关性: relevanceText(r, opts.query || ''),
-    }));
+    const kind = opts.kind || detectResultKind(arr);
+    if (kind === 'search') return searchRows(arr, opts);
+    if (kind === 'quality') return qualityRows(arr);
+    if (kind === 'region') return regionRows(arr);
+    if (kind === 'magnet') return magnetRows(arr);
+    if (kind === 'pan') return panRows(arr);
+    if (kind === 'links') return linkRows(arr);
   }
   if (key === 'candidates') {
+    const sample = arr.find((x) => x && typeof x === 'object') || {};
+    if ('canonical_title' in sample || 'tmdb_id' in sample) {
+      // resolve_media / TMDB 候选：没有站点/评分，别套字幕候选那套列
+      return arr.map((c) => ({
+        标题: c.canonical_title || c.title || '',
+        原名: c.original_title || '',
+        年份: c.year === undefined || c.year === null ? '' : c.year,
+        类型: c.media_type || '',
+        'TMDB ID': c.tmdb_id === undefined || c.tmdb_id === null ? '' : c.tmdb_id,
+        语言: c.original_language || '',
+        产地: Array.isArray(c.origin_country) ? c.origin_country.join('/') : '',
+      }));
+    }
     return arr.map((c) => ({
       标题: c.title || '',
       站点: c.site || '',
-      评分: c.score,
+      评分: c.score === undefined || c.score === null ? '' : c.score,
       格式: c.format || '',
       语言: Array.isArray(c.languages) ? c.languages.join('/') : (c.languages || ''),
       整季包: c.pack_hint ? '是' : '',
       发布名: c.release_name || '',
+    }));
+  }
+  if (key === 'matches') {
+    const sample = arr.find((x) => x && typeof x === 'object') || {};
+    if ('parsed' in sample) {
+      return arr.map((m) => ({
+        名称: m.name || '',
+        标题: (m.parsed && m.parsed.title) || '',
+        年份: (m.parsed && m.parsed.year) === undefined || (m.parsed && m.parsed.year) === null ? '' : m.parsed.year,
+        季: (m.parsed && m.parsed.season) === undefined || (m.parsed && m.parsed.season) === null ? '' : m.parsed.season,
+        集: (m.parsed && m.parsed.episode) === undefined || (m.parsed && m.parsed.episode) === null ? '' : m.parsed.episode,
+        分辨率: (m.parsed && m.parsed.resolution) || '',
+        大小: shortSize(m.size_bytes),
+        路径: m.path || '',
+      }));
+    }
+    return arr.map((m) => ({
+      名称: m.name || '',
+      类型: m.type || '',
+      类别: m.media_category || '',
+      扩展名: m.extension || '',
+      大小: shortSize(m.size_bytes),
+      修改时间: m.mtime === undefined || m.mtime === null ? '' : m.mtime,
+      相对路径: m.relative_path || m.path || '',
     }));
   }
   if (key === 'entries') {
@@ -2470,14 +3392,28 @@ function specialRows(key, arr, opts = {}) {
       创建时间: j.created_at, 完成时间: j.finished_at, 耗时: j.duration_ms,
     }));
   }
-  return arr.map((row) => {
-    const flat = {};
-    flatten(row, '', 0, flat);
-    const out = {};
-    for (const [k, v] of Object.entries(flat)) out[k] = v;
-    return out;
-  });
+  if (key === 'shows') return showRows(arr);
+  if (key === 'groups' || key === 'suspects' || key === 'duplicate_groups') return groupRows(arr);
+  if (key === 'multi_root_shows') return multiRootRows(arr);
+  if (key === 'seasons') return seasonRows(arr);
+  if (key === 'plan') return planRows(arr);
+  if (key === 'plans') return muxPlanRows(arr);
+  if (key === 'executed') return muxPlanRows(arr);
+  if (key === 'site_attempts') {
+    return arr.map((a) => ({
+      站点: a.site || '',
+      状态: SITE_ATTEMPT_STATUS_TEXT[a.status] || a.status || '',
+      结果数: a.count === undefined || a.count === null ? '' : a.count,
+      最高分: a.best_score === undefined || a.best_score === null ? '' : a.best_score,
+      说明: a.reason || a.error || '',
+    }));
+  }
+  if (key === 'errors') return errorsRows(arr);
+  if (key === 'failed_items') return itemRows(arr);
+  if (key === 'items') return itemRows(arr);
+  return arr.map(genericRow);
 }
+
 
 function flatten(obj, prefix, depth, out) {
   for (const [k, v] of Object.entries(obj || {})) {
@@ -2508,6 +3444,30 @@ function columnOrder(rows) {
   };
   keys.sort((a, b) => rank(a) - rank(b));
   return keys.slice(0, 9);
+}
+
+// 空结果的主行动按钮：按工具所属场景，把用户送到真正能继续的地方
+function emptyActionForTool(tool) {
+  const spec = (tool && S.tools[tool]) || {};
+  const cat = spec.category || '';
+  if (/media_search|jackett|seedhub|dysbk|subhd_search/.test(tool || '')) {
+    const label = t('去搜索', '去搜索');
+    return { label: label, onClick: () => { location.hash = '#/resource'; } };
+  }
+  if (cat === '字幕' || /subtitle|mux/.test(tool || '')) {
+    const label = t('去找字幕', '去找字幕');
+    return { label: label, onClick: () => { location.hash = '#/subtitle'; } };
+  }
+  if (cat === '文件') {
+    const label = t('去媒体浏览', '去翻文件夹');
+    return { label: label, onClick: () => { location.hash = '#/browse'; } };
+  }
+  if (cat === '整理') {
+    const label = t('去整理', '去整理');
+    return { label: label, onClick: () => { location.hash = '#/organize'; } };
+  }
+  const label = t('去扫描', '去扫描');
+  return { label: label, onClick: () => { location.hash = '#/scan'; } };
 }
 
 // 详情抽屉：人类可读的键值列表，链接单独处理（可点开、可复制），原始 JSON 收在最后
@@ -2567,12 +3527,18 @@ function renderTable(key, arr, opts = {}) {
   } catch (err) {
     rows = arr.map((item) => ({ 内容: JSON.stringify(item) }));
   }
-  // 指定 cols 的表只显示这几列（其余字段留在详情抽屉里），避免 9 列上限把关键字段切掉
+  // 指定 cols 的表只显示这几列（其余字段留在详情抽屉里），避免 9 列上限把关键字段切掉。
+  // 整列为空（缺字段/结构不一致）时直接不显示，避免出现空白列或 undefined。
+  const nonEmpty = (c) => rows.some((row) => row[c] !== undefined && row[c] !== null && row[c] !== '');
   const cols = opts.columns && opts.columns.length
-    ? opts.columns.filter((c) => rows.some((row) => c in row))
-    : columnOrder(rows);
+    ? opts.columns.filter((c) => nonEmpty(c) && rows.some((row) => c in row))
+    : columnOrder(rows).filter(nonEmpty);
   if (!cols.length) {
-    section.appendChild(emptyState(t('没有可显示的行', '这里现在没有内容'), t('换个条件再试一次，或看看原始数据。', '换个条件试试，或展开下面的技术详情。')));
+    section.appendChild(emptyState({
+      title: t('没有可显示的行', '这里现在没有内容'),
+      hint: t('换个条件再试一次，或看看原始数据。', '换个条件试试，或展开下面的原始数据。'),
+      action: opts.tool ? emptyActionForTool(opts.tool) : { label: t('重试', '再试一次'), onClick: () => route() },
+    }));
     return section;
   }
   // 行对：显示行与原始对象一一对应，排序后详情仍取得到原始数据。
@@ -2598,32 +3564,39 @@ function renderTable(key, arr, opts = {}) {
   };
 
   const wrap = el('div', 'table-wrap');
+  if (opts.fit) wrap.classList.add('fit-wrap');
   // 结果表筛选条：关键词 + 来源，避免在长表里靠肉眼找
   const filter = { q: '', source: '' };
   let filterCount = null;
-  if (opts.filterable) {
+  let qInput = null;
+  let srcSel = null;
+  // 统一规则：任何超过 8 行的表都出现同一个筛选条；明确传 filterable:false 才隐藏
+  if (opts.filterable !== false && base.length > 8) {
     const bar = el('div', 'table-filter');
-    const qInput = document.createElement('input');
+    qInput = document.createElement('input');
     qInput.type = 'search';
-    qInput.placeholder = t('筛选标题 / 来源…', '筛选：标题或来源');
+    qInput.placeholder = opts.filterPlaceholder || t('筛选…（匹配所有列）', '筛选：输入关键词');
     qInput.setAttribute('aria-label', t('筛选结果', '筛选结果'));
-    const srcSel = document.createElement('select');
-    srcSel.setAttribute('aria-label', t('按来源筛选', '按来源筛选'));
-    const allOpt = document.createElement('option');
-    allOpt.value = '';
-    allOpt.textContent = t('全部来源', '全部来源');
-    srcSel.appendChild(allOpt);
-    const sources = [...new Set(rows.map((r) => r['来源']).filter(Boolean))];
-    for (const s of sources) {
-      const opt = document.createElement('option');
-      opt.value = s;
-      opt.textContent = s;
-      srcSel.appendChild(opt);
+    const hasSource = cols.includes('来源');
+    if (hasSource) {
+      srcSel = document.createElement('select');
+      srcSel.setAttribute('aria-label', t('按来源筛选', '按来源筛选'));
+      const allOpt = document.createElement('option');
+      allOpt.value = '';
+      allOpt.textContent = t('全部来源', '全部来源');
+      srcSel.appendChild(allOpt);
+      const sources = [...new Set(rows.map((r) => r['来源']).filter(Boolean))];
+      for (const s of sources) {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        srcSel.appendChild(opt);
+      }
     }
     filterCount = el('span', 'muted', '');
-    qInput.addEventListener('input', () => { filter.q = qInput.value.trim().toLowerCase(); drawBody(); });
-    srcSel.addEventListener('change', () => { filter.source = srcSel.value; drawBody(); });
-    bar.append(qInput, srcSel, filterCount);
+    qInput.addEventListener('input', () => { filter.q = qInput.value.trim().toLowerCase(); visible = pageSize; drawBody(); });
+    if (srcSel) srcSel.addEventListener('change', () => { filter.source = srcSel.value; visible = pageSize; drawBody(); });
+    bar.append(qInput, ...(srcSel ? [srcSel] : []), filterCount);
     section.appendChild(bar);
   }
   const matches = (row) => {
@@ -2632,7 +3605,13 @@ function renderTable(key, arr, opts = {}) {
     const hay = cols.map((c) => String(row[c] ?? '')).join(' ').toLowerCase();
     return hay.includes(filter.q);
   };
+  // 媒体表：固定布局 + 百分比列宽，容器再窄也按比例收缩、文本省略，不产生横向滚动条
+  const fitWidths = {
+    名称: '24%', 标题: '24%', 分辨率: '8%', 编码: '10%', 画质: '15%', 音轨: '15%',
+    大小: '8%', 中字: '7%', 评级: '9%', 状态: '9%', 来源: '10%',
+  };
   const table = document.createElement('table');
+  if (opts.fit) table.className = 'fit-table';
   const thead = document.createElement('thead');
   const trh = document.createElement('tr');
   const thNodes = [];
@@ -2657,6 +3636,8 @@ function renderTable(key, arr, opts = {}) {
   }
   for (const col of cols) {
     const th = el('th', 'sortable');
+    if (opts.fit && fitWidths[col]) th.style.width = fitWidths[col];
+    if (opts.fit && (col === '名称' || col === '标题')) th.classList.add('sticky-col');
     th.appendChild(el('span', null, label(col)));
     const caret = el('i', 'sort-ind', '');
     th.appendChild(caret);
@@ -2674,18 +3655,34 @@ function renderTable(key, arr, opts = {}) {
     thNodes.push(th);
     trh.appendChild(th);
   }
-  trh.appendChild(el('th', 'actions-col', t('操作', '操作')));
+  const actionsTh = el('th', 'actions-col', t('操作', '操作'));
+  if (opts.fit) actionsTh.style.width = '12%';
+  trh.appendChild(actionsTh);
   thead.appendChild(trh);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
   table.appendChild(tbody);
 
-  const limit = Math.min(base.length, 300);
+  // 分页/加载更多：搜索结果每页 50 条，其他大表每页 300 条；不再静默截断
+  const paged = !!opts.paged || base.length > 300;
+  const pageSize = paged ? (opts.pageSize || 50) : 300;
+  let visible = pageSize;
+  const emptyHost = el('div', 'table-empty');
+  const moreBar = el('div', 'table-more');
+  const clearFilters = () => {
+    filter.q = '';
+    filter.source = '';
+    if (qInput) qInput.value = '';
+    if (srcSel) srcSel.value = '';
+    visible = pageSize;
+    drawBody();
+  };
   const drawBody = () => {
     tbody.textContent = '';
     const pairs = ordered().filter((p) => matches(p.row));
-    if (filterCount) filterCount.textContent = pairs.length + ' / ' + base.length;
-    for (let i = 0; i < Math.min(pairs.length, limit); i += 1) {
+    if (filterCount) filterCount.textContent = (filter.q || filter.source) ? pairs.length + ' / ' + base.length : '';
+    const shown = Math.min(pairs.length, visible);
+    for (let i = 0; i < shown; i += 1) {
       const pair = pairs[i];
       const row = pair.row;
       const tr = document.createElement('tr');
@@ -2719,7 +3716,11 @@ function renderTable(key, arr, opts = {}) {
         const value = row[col];
         const td = el('td', typeof value === 'number' ? 'num' : 'wrap', fmtCell(value, col));
         td.dataset.label = label(col); // 手机端卡片化时作为字段名
-        if (typeof value === 'string' && value.length > 60) td.title = value;
+        if (opts.fit && (col === '名称' || col === '标题')) {
+          td.classList.add('sticky-col');
+          td.title = String(value ?? '');
+        } else if (typeof value === 'string' && value.length > 60) td.title = value;
+        else if (opts.fit && typeof value === 'string' && value.length > 12) td.title = value;
         tr.appendChild(td);
       }
       const actionTd = el('td');
@@ -2728,7 +3729,9 @@ function renderTable(key, arr, opts = {}) {
       const isDir = pair.src && isDirEntry(pair.src);
 
       if (isVideo) {
-        const quickBtn = el('button', 'quick-action-pill', '⚡ ' + t('快捷操作', '操作'));
+        const quickBtn = el('button', 'quick-action-pill');
+        quickBtn.appendChild(el('span', null, '⚡'));
+        quickBtn.appendChild(el('span', 'qa-label', ' ' + t('快捷操作', '操作')));
         quickBtn.type = 'button';
         quickBtn.title = t('打开单片快捷操作面板（搜字幕/混流/整理/体检）', '打开快捷面板');
         quickBtn.onclick = (ev) => {
@@ -2773,7 +3776,7 @@ function renderTable(key, arr, opts = {}) {
         detail.className = 'detail';
         const td = document.createElement('td');
         td.colSpan = cols.length + 1 + (selectable ? 1 : 0);
-        td.appendChild(renderDetail(pair.src));
+        td.appendChild(opts.detail ? opts.detail(pair.src, row) : renderDetail(pair.src));
         td.appendChild(rawDetails(pair.src));
         detail.appendChild(td);
         tr.after(detail);
@@ -2815,27 +3818,83 @@ function renderTable(key, arr, opts = {}) {
         notifySelect();
       };
     }
+    // 过滤后没有行：把空结果也收进统一空状态，并给一个能继续操作的按钮
+    emptyHost.textContent = '';
+    moreBar.textContent = '';
+    if (!pairs.length) {
+      const activeFilter = !!(filter.q || filter.source);
+      emptyHost.appendChild(emptyState({
+        title: activeFilter ? t('没有符合筛选的结果。', '没有符合条件的结果') : t('这里现在没有内容。', '这里现在没有内容'),
+        hint: activeFilter
+          ? t('清空筛选条件就能看到全部结果。', '清空上面的筛选就能看到全部。')
+          : t('换个位置或条件再试一次。', '换个位置或条件再试一次。'),
+        action: activeFilter
+          ? { label: t('清空筛选', '清空筛选'), onClick: clearFilters }
+          : (opts.tool ? emptyActionForTool(opts.tool) : { label: t('重试', '再试一次'), onClick: () => route() }),
+      }));
+      return;
+    }
+    const backendCap = pairs.length >= 500 ? t('；后端单次最多返回 500 条', '；后端一次最多给 500 条') : '';
+    moreBar.appendChild(el('span', 'muted', t(`已显示 ${shown} / 共 ${pairs.length} 条${backendCap}`, `显示 ${shown} / 共 ${pairs.length} 条${backendCap}`)));
+    if (pairs.length > visible) {
+      const more = el('button', 'ghost small', t(`加载更多（还有 ${pairs.length - visible} 条）`, `再看 ${Math.min(pageSize, pairs.length - visible)} 条`));
+      more.type = 'button';
+      more.addEventListener('click', () => { visible += pageSize; drawBody(); });
+      moreBar.appendChild(more);
+    }
   };
   drawBody();
   wrap.appendChild(table);
   section.appendChild(wrap);
-  if (base.length > limit) section.appendChild(el('p', 'muted', t(`仅显示前 ${limit} 条，完整数据见原始 JSON。`, `只显示前 ${limit} 条，更多内容在「技术详情」里。`)));
+  section.appendChild(emptyHost);
+  section.appendChild(moreBar);
   return section;
 }
 
 // ---------------------------------------------------------------- 预设流水线执行器
+// 中断时的「跳到对应工具」按钮：流程停在哪一步，就把用户送到哪一步继续
+function flowJump(tool, label) {
+  const btn = el('button', 'ghost small flow-jump', label || t('跳到对应工具', '去这里继续'));
+  btn.type = 'button';
+  btn.addEventListener('click', () => sendToTool(tool, {}));
+  return btn;
+}
+
+// 步骤摘要：折叠后仍能看到这一步产出了什么
+function resultBrief(result) {
+  if (!result || typeof result !== 'object') return '';
+  const summary = result.summary;
+  if (summary && typeof summary === 'object') {
+    const parts = Object.entries(summary)
+      .filter(([, v]) => v != null && v !== '' && typeof v !== 'object')
+      .slice(0, 3)
+      .map(([k, v]) => label(k) + ' ' + v);
+    if (parts.length) return parts.join(' · ');
+  }
+  if (Array.isArray(result.results)) {
+    return result.results.length ? t(`找到 ${result.results.length} 条结果`, `找到 ${result.results.length} 条结果`) : t('没有结果', '没有找到结果');
+  }
+  const list = Object.entries(result).find(([, v]) => Array.isArray(v) && v.length);
+  if (list) return label(list[0]) + ' ' + list[1].length + t(' 项', ' 项');
+  return '';
+}
+
 // 串行跑 FLOWS 的步骤：上一步结果注入下一步；缺参数/门控关闭/失败都会停下来交给用户。
 async function runFlow(flow, base, log) {
   log.textContent = '';
   let prev = null;
-  for (const step of flow.steps) {
+  for (let i = 0; i < flow.steps.length; i += 1) {
+    const step = flow.steps[i];
     const spec = S.tools[step.tool];
-    const head = el('div', 'result-head');
+    // 一层流程 → 一层步骤（可折叠摘要）→ 步骤内的结果表
+    const stepCard = el('details', 'flow-step');
+    stepCard.open = true;
+    const head = el('summary', 'flow-step-head');
     const badge = el('span', 'badge warn', t('进行中', '进行中'));
-    const title = el('strong', null, spec ? pick(FRIENDLY.tool, step.tool, spec.title) : step.tool);
-    head.append(badge, title);
+    const title = el('strong', null, `${i + 1}. ` + (spec ? pick(FRIENDLY.tool, step.tool, spec.title) : step.tool));
+    const brief = el('span', 'flow-step-brief', '');
+    head.append(badge, title, brief);
     const body = el('div', 'flow-step-body');
-    const stepCard = el('div', 'flow-step', '');
     stepCard.append(head, body);
     log.appendChild(stepCard);
     stepCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -2851,7 +3910,9 @@ async function runFlow(flow, base, log) {
     if (!args) {
       badge.className = 'badge';
       badge.textContent = t('待补参数', '等你补充');
+      brief.textContent = t('缺参数，已停下', '缺信息，停在这里');
       body.textContent = t('缺少参数，已停下。到对应功能页填写后继续。', '少了信息，先停下来；到对应功能里填好再继续。');
+      body.appendChild(flowJump(step.tool, t('去补参数', '去补参数')));
       return;
     }
     const gateCfg = S.config || {};
@@ -2859,8 +3920,13 @@ async function runFlow(flow, base, log) {
     if (offGates.length && args.dry_run !== true) {
       badge.className = 'badge err';
       badge.textContent = t('被配置拦下', '没权限');
+      brief.textContent = t('缺配置，已停下', '没权限，停在这里');
       body.textContent = t(`需要先在「配置」页开启：${offGates.join('、')}`,
         `要先到「配置」页打开「${offGates.map((g) => GATE_LABELS[g]).join('」和「')}」`);
+      const conf = el('button', 'ghost small flow-jump', t('去配置打开权限', '去打开权限'));
+      conf.type = 'button';
+      conf.addEventListener('click', () => { location.hash = '#/config'; });
+      body.append(conf, flowJump(step.tool));
       return;
     }
     try {
@@ -2884,11 +3950,16 @@ async function runFlow(flow, base, log) {
       body.textContent = '';
       renderResult(result, body, { tool: step.tool, args });
       prev = result;
+      brief.textContent = resultBrief(result);
+      stepCard.open = false; // 完成的步骤收成一行摘要，结果表仍可展开
     } catch (err) {
       badge.className = 'badge err';
       badge.textContent = t('中断', '出错了');
+      brief.textContent = t('出错，已停下', '出错了，停在这里');
       body.textContent = '';
       body.appendChild(errorBox({ code: err.code || 'request_failed', message: err.message || String(err) }));
+      body.appendChild(flowJump(step.tool));
+      stepCard.open = true;
       return;
     }
   }
@@ -2897,15 +3968,71 @@ async function runFlow(flow, base, log) {
 // ---------------------------------------------------------------- 概览
 async function pageOverview(view) {
   setHeader('概览', t('能力总览、存储空间与写权限状态。', '看看 NAS 里有什么、空间还剩多少。'));
+  let jobsError = null;
   const [overview, jobs] = await Promise.all([
     api('/api/overview'),
-    api('/api/jobs?limit=6').catch(() => ({ jobs: [] })),
+    api('/api/jobs?limit=6').catch((err) => { jobsError = err; return { jobs: [] }; }),
   ]);
   const app = overview.app || {};
   const cfg = overview.config || {};
   const disk = overview.disk || {};
   const filesystems = disk.filesystems || [];
   const toolsCount = app.tool_count || (S.meta && S.meta.tools.length) || 0;
+
+  // 首屏引导：第一次来的人先看到「按这三步」，数字卡排在后面
+  const allowedCount = (cfg.allowed_paths || []).length;
+  const guide = el('article', 'card start-card');
+  const ghead = el('div', 'card-head');
+  ghead.appendChild(el('h2', null, t('开始使用', '第一次用？按这三步')));
+  ghead.appendChild(el('span', 'muted', t('不按顺序也行，左侧功能页随时能进', '不按顺序也行，左边随时能点')));
+  guide.appendChild(ghead);
+  const gbody = el('div', 'card-body start-steps');
+  const mkStep = (num, titleText, hintText, acts) => {
+    const box = el('div', 'start-step');
+    box.appendChild(el('span', 'num', String(num)));
+    const main = el('div', 'st-main');
+    main.appendChild(el('div', 'st-title', titleText));
+    main.appendChild(el('div', 'st-hint', hintText));
+    if (acts.length) {
+      const row = el('div', 'st-acts');
+      for (const [labelText, page, ghost] of acts) {
+        const btn = el('button', (ghost ? 'ghost' : 'primary') + ' small', labelText);
+        btn.type = 'button';
+        btn.addEventListener('click', () => { location.hash = '#/' + page; });
+        row.appendChild(btn);
+      }
+      main.appendChild(row);
+    }
+    box.appendChild(main);
+    return box;
+  };
+  gbody.appendChild(mkStep(1, t('设定可访问的文件夹', '先设置能访问的文件夹'),
+    allowedCount
+      ? t(`当前有 ${allowedCount} 个文件夹可访问。${cfg.enable_write ? '写入已按需开启。' : '现在只读；需要整理时再去打开写开关。'}`,
+        `现在能看 ${allowedCount} 个文件夹。${cfg.enable_write ? '需要改文件时已经可以写。' : '现在只能看；要整理时再去打开开关。'}`)
+      : t('还没有设置可访问的文件夹，先加一个媒体库目录。', '还没设置文件夹，先加一个媒体库位置。'),
+    [[t('去配置', '去设置'), 'config']]));
+  gbody.appendChild(mkStep(2, t('扫描媒体库', '扫一遍媒体库'),
+    t('先知道有哪些影片、缺哪几集、有没有损坏。', '先看看都有什么片、缺不缺集、有没有坏文件。'),
+    [[t('去扫描', '开始扫描'), 'scan']]));
+  gbody.appendChild(mkStep(3, t('补字幕 / 查缺口', '补字幕、查缺集'),
+    t('字幕缺失就批量补；怀疑缺集就做缺集检查。', '没字幕就批量补；觉得少了集就查一查。'),
+    [[t('去字幕', '去补字幕'), 'subtitle'], [t('去体检', '去检查'), 'scan', true]]));
+  const extras = el('div', 'start-extras');
+  extras.appendChild(el('span', 'muted', t('也可以直接：', '也可以直接：')));
+  for (const [labelText, page] of [
+    [t('找资源', '找资源'), 'resource'],
+    [t('整理文件', '自动归类'), 'organize'],
+    [t('修改配置', '改设置'), 'config'],
+  ]) {
+    const btn = el('button', 'ghost small', labelText);
+    btn.type = 'button';
+    btn.addEventListener('click', () => { location.hash = '#/' + page; });
+    extras.appendChild(btn);
+  }
+  gbody.appendChild(extras);
+  guide.appendChild(gbody);
+  view.appendChild(guide);
 
   const stats = el('div', 'grid cols-4');
   stats.appendChild(statCard(t('可用工具', '能做的事'), toolsCount + ' 个', `核心 ${app.core_version || ''} · 应用 ${app.version || ''}`));
@@ -2939,9 +4066,7 @@ async function pageOverview(view) {
     card.appendChild(body);
     view.appendChild(card);
   } else if (disk.ok === false && disk.error) {
-    const box = el('div', 'notice');
-    box.textContent = t('磁盘信息不可用：', '暂时读不到磁盘信息：') + disk.error.message;
-    view.appendChild(box);
+    view.appendChild(errorBox({ code: 'load_failed', message: t('磁盘信息不可用：', '暂时读不到磁盘信息：') + (disk.error.message || '') }, { retry: () => route() }));
   }
 
   // 一键流程：把多步手工衔接串成一条流水线（缺参/无权限会停下来交给用户）
@@ -3001,29 +4126,6 @@ async function pageOverview(view) {
   flowCard.appendChild(fbody);
   view.appendChild(flowCard);
 
-  const quick = el('article', 'card');
-  const qhead = el('div', 'card-head');
-  qhead.appendChild(el('h2', null, t('常用入口', '常用的几件事')));
-  quick.appendChild(qhead);
-  const qbody = el('div', 'card-body');
-  const actions = el('div', 'result-head');
-  for (const [labelText, page] of [
-    [t('扫描媒体库', '检查媒体文件'), 'scan'],
-    [t('补全字幕', '补字幕'), 'subtitle'],
-    [t('资源搜索', '找资源'), 'resource'],
-    [t('整理媒体目录', '自动归类文件'), 'organize'],
-    [t('修改配置', '设置'), 'config'],
-  ]) {
-    const btn = el('button', 'ghost', labelText);
-    btn.type = 'button';
-    btn.addEventListener('click', () => { location.hash = '#/' + page; });
-    actions.appendChild(btn);
-  }
-  qbody.appendChild(actions);
-  if (cfg.config_path && IS_PRO()) qbody.appendChild(el('p', 'muted mono', '配置文件：' + cfg.config_path));
-  quick.appendChild(qbody);
-  view.appendChild(quick);
-
   const recent = el('article', 'card');
   const rhead = el('div', 'card-head');
   rhead.appendChild(el('h2', null, t('最近任务', '最近做了什么')));
@@ -3034,8 +4136,17 @@ async function pageOverview(view) {
   recent.appendChild(rhead);
   const rbody = el('div', 'card-body');
   const jobList = jobs.jobs || [];
-  if (!jobList.length) rbody.appendChild(el('p', 'muted', t('还没有后台任务。扫描、整理、批量补字幕会自动进入后台队列。', '这里还空空的。扫描、整理、批量补字幕时会自动在后台进行。')));
-  else rbody.appendChild(renderJobs(jobList));
+  if (jobsError) {
+    rbody.appendChild(errorBox({ code: jobsError.code || 'load_failed', message: jobsError.message }, { retry: () => route() }));
+  } else if (!jobList.length) {
+    rbody.appendChild(emptyState({
+      title: t('还没有后台任务。', '这里还空空的'),
+      hint: t('扫描、整理、批量补字幕会自动进入后台队列。', '扫描、整理、批量补字幕时会在后台进行，做完会出现在这里。'),
+      action: { label: t('去扫描媒体库', '先扫描一下'), onClick: () => { location.hash = '#/scan'; } },
+    }));
+  } else {
+    rbody.appendChild(renderJobs(jobList, () => route()));
+  }
   recent.appendChild(rbody);
   view.appendChild(recent);
 }
@@ -3048,7 +4159,33 @@ function statCard(labelText, value, hint) {
   return card;
 }
 
-function renderJobs(jobs) {
+// 任务已用时间：后端只给状态和时间戳，没有阶段/百分比，这里只如实显示时长
+function jobStartMs(job) {
+  const raw = job.started_at || job.created_at;
+  if (!raw) return 0;
+  const ms = Date.parse(String(raw).replace(' ', 'T'));
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function fmtJobElapsed(state, sec) {
+  const s = Math.max(0, Math.round(sec));
+  const body = s >= 60
+    ? `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, '0')} 秒`
+    : `${s} 秒`;
+  return state === 'queued'
+    ? t(`排队等待 ${body}`, `排队 ${body}`)
+    : t(`已运行 ${body}`, `已运行 ${body}`);
+}
+
+function tickJobElapsed() {
+  document.querySelectorAll('.job-elapsed[data-start]').forEach((node) => {
+    const start = Number(node.dataset.start);
+    if (!start) return;
+    node.textContent = fmtJobElapsed(node.dataset.state, (Date.now() - start) / 1000);
+  });
+}
+
+function renderJobs(jobs, onRefresh = null) {
   const wrap = el('div');
   for (const job of jobs) {
     const row = el('div', 'job');
@@ -3056,22 +4193,91 @@ function renderJobs(jobs) {
     const title = el('div');
     title.appendChild(el('strong', null, job.title || job.tool));
     title.appendChild(document.createTextNode(' '));
-    const cls = job.status === 'succeeded' ? 'ok' : (job.status === 'failed' ? 'err' : 'warn');
+    const cls = job.status === 'succeeded' ? 'ok'
+      : (job.status === 'failed' ? 'err' : (job.status === 'canceled' ? '' : 'warn'));
     title.appendChild(el('span', 'badge ' + cls, pick(FRIENDLY.job, job.status, job.status)));
     left.appendChild(title);
     const metaBits = [];
     if (IS_PRO()) metaBits.push(job.id);
     metaBits.push(job.created_at || '');
     if (job.duration_ms != null) metaBits.push((job.duration_ms / 1000).toFixed(1) + 's');
-    left.appendChild(el('div', 'meta', metaBits.filter(Boolean).join(' · ')));
+    const meta = el('div', 'meta');
+    meta.textContent = metaBits.filter(Boolean).join(' · ');
+    const active = job.status === 'running' || job.status === 'queued';
+    if (active) {
+      const start = jobStartMs(job);
+      if (start) {
+        const elapsed = el('span', 'job-elapsed muted');
+        elapsed.dataset.start = String(start);
+        elapsed.dataset.state = job.status;
+        elapsed.textContent = job.cancel_requested
+          ? t('正在取消，等当前步骤结束', '正在取消，等这一步做完')
+          : fmtJobElapsed(job.status, (Date.now() - start) / 1000);
+        if (meta.textContent) meta.appendChild(document.createTextNode(' · '));
+        meta.appendChild(elapsed);
+      }
+    }
+    left.appendChild(meta);
+
+    // 进度：有 total 画进度条，没有 total 用上面的秒表；阶段与当前项都来自任务记录
+    const p = job.progress;
+    if (p && (p.label || p.stage || p.done != null)) {
+      const prog = el('div', 'job-progress');
+      const line = el('div', 'job-progress-line');
+      line.appendChild(el('span', 'job-stage', p.label || p.stage || t('处理中', '处理中')));
+      if (p.total) line.appendChild(el('span', 'job-count muted', `${p.done || 0} / ${p.total}`));
+      prog.appendChild(line);
+      if (p.total) {
+        const bar = el('div', 'progress');
+        const fill = el('i');
+        fill.style.width = Math.min(100, Math.round(((p.done || 0) / p.total) * 100)) + '%';
+        bar.appendChild(fill);
+        prog.appendChild(bar);
+      }
+      if (p.current) {
+        const cur = el('div', 'job-current muted');
+        cur.textContent = t(`当前：${p.current}`, `正在弄：${p.current}`);
+        cur.title = p.current;
+        prog.appendChild(cur);
+      }
+      left.appendChild(prog);
+    }
+
     row.appendChild(left);
-    if (job.status === 'succeeded' || job.status === 'failed') {
+    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'canceled') {
       const btn = el('button', 'ghost small', '查看结果');
       btn.type = 'button';
       btn.addEventListener('click', () => showJob(job));
       row.appendChild(btn);
     } else {
-      row.appendChild(el('span', 'pulse'));
+      const cancelBtn = el('button', 'ghost small job-cancel', '取消');
+      cancelBtn.type = 'button';
+      cancelBtn.addEventListener('click', async () => {
+        const ok = await confirmDialog({
+          title: t('取消这个任务？', '要取消这个任务吗？'),
+          intro: t('任务会在下一个处理步骤停下，已完成的部分会保留。',
+            '任务会在下一步停下，已经做完的部分会保留。'),
+          confirmText: t('取消任务', '取消任务'),
+          danger: true,
+        });
+        if (!ok) return;
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = t('取消中…', '正在取消…');
+        try {
+          const data = await api(`/api/jobs/${encodeURIComponent(job.id)}/cancel`, { method: 'POST' });
+          Object.assign(job, data.job || {});
+          toast(t('已请求取消，等当前步骤结束', '说了取消，等这一步做完'));
+          if (onRefresh) onRefresh();
+        } catch (err) {
+          cancelBtn.disabled = false;
+          cancelBtn.textContent = '取消';
+          toast(t('取消失败：' + err.message, '没取消成功：' + err.message), true);
+        }
+      });
+      const actions = el('div', 'job-actions');
+      actions.appendChild(cancelBtn);
+      actions.appendChild(el('span', 'pulse'));
+      row.appendChild(actions);
     }
     wrap.appendChild(row);
   }
@@ -3090,8 +4296,16 @@ function showJob(job) {
   card.appendChild(head);
   const body = el('div', 'card-body');
   const out = el('div');
+  // 部分结果说明与 result.canceled / result.partial 同源，不靠状态推断
+  if (jobPartial(job)) {
+    const note = el('div', 'job-partial-note');
+    note.appendChild(el('strong', null, t('任务已取消，下面是已完成的部分。', '任务取消了，下面是已经做完的部分。')));
+    body.appendChild(note);
+  }
   if (job.result) renderResult(job.result, out, { tool: job.tool, args: job.args || {} });
-  else out.appendChild(errorBox(job.error || { code: job.status, message: '无结果' }));
+  else if (job.status === 'canceled') {
+    out.appendChild(el('p', 'muted', t('任务已取消，还没有开始执行。', '任务已取消，还没开始做。')));
+  } else out.appendChild(errorBox(job.error || { code: job.status, message: '无结果' }));
   body.appendChild(out);
   card.appendChild(body);
   // 有专门的展示位就放进去，避免把结果卡插到整页最顶部、把任务列表顶走
@@ -3205,28 +4419,50 @@ function breadcrumb(path) {
   const cur = clampToRoots(path);
   const root = rootOf(cur) || cur;
   const rootName = root === '/' ? t('根目录', '根目录') : root.split('/').filter(Boolean).pop();
-  const rootBtn = el('button', 'crumb', rootName);
-  rootBtn.type = 'button';
-  rootBtn.title = root;
-  rootBtn.addEventListener('click', () => goBrowse(root));
-  nav.appendChild(rootBtn);
   const rest = cur.slice(root === '/' ? 0 : root.length);
   const parts = rest.split('/').filter(Boolean);
   let acc = root === '/' ? '' : root;
-  parts.forEach((part, i) => {
-    nav.appendChild(el('i', 'sep', '›'));
+  const segs = parts.map((part, i) => {
     acc += '/' + part;
-    if (i === parts.length - 1) {
-      nav.appendChild(el('span', 'crumb current', part));
-      return;
-    }
-    const target = acc;
-    const btn = el('button', 'crumb', part);
-    btn.type = 'button';
-    btn.title = target;
-    btn.addEventListener('click', () => goBrowse(target));
-    nav.appendChild(btn);
+    return { part, target: acc, current: i === parts.length - 1 };
   });
+  // 深层目录只保留「根 › … › 上一级 › 当前」，点「…」再展开中间层，避免面包屑折成好几行
+  const collapsed = segs.length > 3;
+  let expanded = false;
+  const paint = () => {
+    nav.textContent = '';
+    const rootBtn = el('button', 'crumb', rootName);
+    rootBtn.type = 'button';
+    rootBtn.title = root;
+    rootBtn.addEventListener('click', () => goBrowse(root));
+    nav.appendChild(rootBtn);
+    const hiddenCount = collapsed && !expanded ? segs.length - 2 : 0;
+    const visible = hiddenCount ? segs.slice(hiddenCount) : segs;
+    if (hiddenCount) {
+      nav.appendChild(el('i', 'sep', '›'));
+      const dots = el('button', 'crumb crumb-more', '…');
+      dots.type = 'button';
+      dots.title = t(`展开中间 ${hiddenCount} 层`, `展开中间 ${hiddenCount} 层`);
+      dots.setAttribute('aria-label', dots.title);
+      dots.addEventListener('click', () => { expanded = true; paint(); });
+      nav.appendChild(dots);
+    }
+    for (const seg of visible) {
+      nav.appendChild(el('i', 'sep', '›'));
+      if (seg.current) {
+        const now = el('span', 'crumb current', seg.part);
+        now.title = seg.target;
+        nav.appendChild(now);
+        continue;
+      }
+      const btn = el('button', 'crumb', seg.part);
+      btn.type = 'button';
+      btn.title = seg.target;
+      btn.addEventListener('click', () => goBrowse(seg.target));
+      nav.appendChild(btn);
+    }
+  };
+  paint();
   return nav;
 }
 
@@ -3267,7 +4503,7 @@ function browserCard(path, result) {
   const cur = clampToRoots(path);
   const root = rootOf(cur) || cur;
   const atTop = cur === root;
-  const left = el('div');
+  const left = el('div', 'head-main');
   const mounts = mountSwitcher(cur);
   if (mounts) left.appendChild(mounts);
   left.appendChild(breadcrumb(cur));
@@ -3284,46 +4520,58 @@ function browserCard(path, result) {
     goBrowse(parent);
   });
   acts.appendChild(up);
-  acts.appendChild(copyButton(cur));
-
-  const orgCurBtn = el('button', 'ghost small', '⇄ ' + t('整理此目录', '整理这里'));
-  orgCurBtn.type = 'button';
-  orgCurBtn.title = t('将此目录带入规范整理工具', '把当前文件夹带入整理工具');
-  orgCurBtn.addEventListener('click', () => sendToTool('organize_media', { path: cur }));
-  acts.appendChild(orgCurBtn);
-
-  const scanCurBtn = el('button', 'ghost small', '◉ ' + t('体检此目录', '扫描这里'));
-  scanCurBtn.type = 'button';
-  scanCurBtn.title = t('对当前目录执行媒体体检扫描', '扫描当前文件夹');
-  scanCurBtn.addEventListener('click', () => sendToTool('nas_scan_media', { path: cur }));
-  acts.appendChild(scanCurBtn);
 
   const refresh = el('button', 'ghost small', t('刷新', '刷新'));
   refresh.type = 'button';
   refresh.addEventListener('click', () => route());
   acts.appendChild(refresh);
+
+  // 低频动作收进「更多」，窄屏下头部不再被五个按钮挤爆
+  const more = el('details', 'more-menu');
+  const moreSummary = el('summary', 'ghost small more-summary', t('更多', '更多') + ' ▾');
+  moreSummary.title = t('复制路径、整理此目录、体检此目录', '复制路径、整理这里、扫描这里');
+  more.appendChild(moreSummary);
+  const menu = el('div', 'more-list');
+  const copy = copyButton(cur, t('复制当前路径', '复制当前路径'));
+  const orgCurBtn = el('button', 'ghost small', '⇄ ' + t('整理此目录', '整理这里'));
+  orgCurBtn.type = 'button';
+  orgCurBtn.title = t('将此目录带入规范整理工具', '把当前文件夹带入整理工具');
+  orgCurBtn.addEventListener('click', () => sendToTool('organize_media', { path: cur }));
+  const scanCurBtn = el('button', 'ghost small', '◉ ' + t('体检此目录', '扫描这里'));
+  scanCurBtn.type = 'button';
+  scanCurBtn.title = t('对当前目录执行媒体体检扫描', '扫描当前文件夹');
+  scanCurBtn.addEventListener('click', () => sendToTool('nas_scan_media', { path: cur }));
+  for (const item of [copy, orgCurBtn, scanCurBtn]) {
+    item.classList.add('more-item');
+    item.addEventListener('click', () => { more.open = false; });
+    menu.appendChild(item);
+  }
+  more.appendChild(menu);
+  acts.appendChild(more);
   head.appendChild(acts);
   card.appendChild(head);
 
   const body = el('div', 'card-body');
   if (!result || result.ok === false) {
-    body.appendChild(errorBox((result && result.error) || { code: 'load_failed', message: '目录读取失败' }));
+    body.appendChild(errorBox((result && result.error) || { code: 'load_failed', message: '目录读取失败' }, { retry: () => route() }));
   } else {
     const entries = Array.isArray(result.entries) ? result.entries : [];
     if (!entries.length) {
-      const otherRoots = allowedRoots().length > 1;
-      body.appendChild(emptyState(t('目录为空。', '这个文件夹是空的'), atTop && otherRoots
-        ? t('点上面的其他挂载文件夹，换个位置看看。', '点上面的其他文件夹，换个位置看看。')
-        : t('可以点上面的「上一级」回到上层文件夹。', '点上面的「上一级」回上一层看看。')));
+      const parent = cur.replace(/\/[^/]+$/, '') || '/';
+      body.appendChild(emptyState({
+        title: t('目录为空。', '这个文件夹是空的'),
+        hint: atTop
+          ? t('点上面的其他挂载文件夹，换个位置看看。', '点上面的其他文件夹，换个位置看看。')
+          : t('可以点上面的「上一级」回到上层文件夹。', '点上面的「上一级」回上一层看看。'),
+        action: atTop
+          ? { label: t('刷新看看', '刷新看看'), onClick: () => route() }
+          : { label: t('回上一层', '回上一层'), onClick: () => goBrowse(parent) },
+      }));
     } else {
+      const dirs = entries.filter(isDirEntry).length;
       const toolbar = el('div', 'toolbar');
-      const filter = document.createElement('input');
-      filter.type = 'text';
-      filter.className = 'page-filter';
-      filter.placeholder = t('在当前文件夹里过滤名称…', '在这里找某个文件…');
-      toolbar.appendChild(filter);
-      const count = el('span', 'muted', '');
-      toolbar.appendChild(count);
+      toolbar.appendChild(el('span', 'muted',
+        t(`${dirs} 个文件夹 · ${entries.length - dirs} 个文件`, `${dirs} 个文件夹 · ${entries.length - dirs} 个文件`)));
       body.appendChild(toolbar);
       const holder = el('div');
       body.appendChild(holder);
@@ -3347,37 +4595,25 @@ function browserCard(path, result) {
         batchBar.appendChild(mk(t('整理所选', '整理这些'), 'organize_media'));
         const clear = el('button', 'ghost small', t('清空选择', '取消选择'));
         clear.type = 'button';
-        clear.onclick = () => { picked = []; draw(); };
+        clear.onclick = () => { picked = []; holder.querySelectorAll('input[type="checkbox"][data-key]').forEach((cb) => { cb.checked = false; }); paintBatch(); };
         batchBar.appendChild(clear);
       };
       const updateBatch = (rows) => {
         picked = rows.filter(isDirEntry).map((e) => e.path);
         paintBatch();
       };
-      const dirs = entries.filter(isDirEntry).length;
-      const draw = () => {
-        const q = filter.value.trim().toLowerCase();
-        const list = q ? entries.filter((e) => String(e.name || '').toLowerCase().includes(q)) : entries;
-        count.textContent = q
-          ? t(`${list.length} / ${entries.length} 项`, `${list.length} / ${entries.length} 个`)
-          : t(`${dirs} 个文件夹 · ${entries.length - dirs} 个文件`, `${dirs} 个文件夹 · ${entries.length - dirs} 个文件`);
-        holder.textContent = '';
-        if (!list.length) {
-          holder.appendChild(emptyState(t('没有匹配的名称。', '没有找到匹配的名字'), t('清除过滤词就能看全部内容。', '清空上面的搜索框就能看到全部。')));
-          return;
-        }
-        holder.appendChild(renderTable('entries', list, {
-          dirsFirst: true,
-          rowLink: isDirEntry,
-          selectable: true,
-          selected: picked,
-          onSelect: updateBatch,
-          activate: (e) => { if (isDirEntry(e)) goBrowse(e.path); },
-        }));
-        paintBatch();
-      };
-      filter.addEventListener('input', draw);
-      draw();
+      // 筛选条统一放在表内（和搜索结果、其他结果表一致）
+      holder.appendChild(renderTable('entries', entries, {
+        dirsFirst: true,
+        rowLink: isDirEntry,
+        selectable: true,
+        selected: picked,
+        onSelect: updateBatch,
+        activate: (e) => { if (isDirEntry(e)) goBrowse(e.path); },
+        filterable: true,
+        filterPlaceholder: t('在当前文件夹里过滤名称…', '在这里找某个文件…'),
+      }));
+      paintBatch();
     }
   }
   card.appendChild(body);
@@ -3581,6 +4817,20 @@ function confirmDialog(opts = {}) {
   });
 }
 
+// 配置分组：低频分组默认折叠，summary 里带一句当前状态，避免整页十多个字段铺开
+function configGroup(titleText, hintText, open) {
+  const root = el('details', 'card cfg-group');
+  root.open = open;
+  const sum = el('summary', 'card-head');
+  sum.appendChild(el('h2', null, titleText));
+  const hint = el('span', 'muted cfg-hint', hintText || '');
+  sum.appendChild(hint);
+  root.appendChild(sum);
+  const body = el('div', 'card-body');
+  root.appendChild(body);
+  return { root, body, hint };
+}
+
 async function pageConfig(view) {
   setHeader('配置', t('修改白名单、写开关与数据源密钥；保存后立即生效。', '设置哪些文件夹可以访问、要不要允许改动文件，以及各网站的密钥。保存后马上生效。'));
   const cfg = await api('/api/config');
@@ -3606,7 +4856,12 @@ async function pageConfig(view) {
   refs.exclude.input.value = (cfg.exclude_paths || []).join('\n');
   for (const f of [refs.allowed, refs.media, refs.exclude]) sform.appendChild(f.field);
   sbody.appendChild(sform);
-  sbody.appendChild(el('p', 'muted', t('当前展开：', '实际生效的文件夹：') + (cfg.allowed_paths_expanded || []).join('、')));
+  const expandedP = el('p', 'muted');
+  const setExpandedText = (list) => {
+    expandedP.textContent = t('当前展开：', '实际生效的文件夹：') + (list || []).join('、');
+  };
+  setExpandedText(cfg.allowed_paths_expanded);
+  sbody.appendChild(expandedP);
   security.appendChild(sbody);
   view.appendChild(security);
 
@@ -3628,11 +4883,11 @@ async function pageConfig(view) {
   gate.appendChild(gbody);
   view.appendChild(gate);
 
-  const sources = el('article', 'card');
-  const oh = el('div', 'card-head');
-  oh.appendChild(el('h2', null, t('资源与数据源', '在线资源网站')));
-  sources.appendChild(oh);
-  const obody = el('div', 'card-body');
+  const enabledSources = [cfg.tmdb.enabled, cfg.jackett.enabled, cfg.seedhub.enabled, cfg.dysbk.enabled].filter(Boolean).length;
+  const srcGroup = configGroup(t('资源与数据源', '在线资源网站'),
+    t(`已启用 ${enabledSources} / 4 个源`, `开了 ${enabledSources} / 4 个网站`), false);
+  const sources = srcGroup.root;
+  const obody = srcGroup.body;
   const oform = el('div', 'tool-form');
   refs.tmdbEnabled = switchField(t('TMDB 中文片名解析', '用 TMDB 识别中文片名'));
   refs.tmdbEnabled.input.checked = !!cfg.tmdb.enabled;
@@ -3651,11 +4906,11 @@ async function pageConfig(view) {
   sources.appendChild(obody);
   view.appendChild(sources);
 
-  const subtitleCard = el('article', 'card');
-  const th = el('div', 'card-head');
-  th.appendChild(el('h2', null, '字幕站点'));
-  subtitleCard.appendChild(th);
-  const tbody = el('div', 'card-body');
+  const enabledSubs = [cfg.subhd.enabled, cfg.opensubtitles.enabled, cfg.shooter.enabled].filter(Boolean).length;
+  const subGroup = configGroup('字幕站点',
+    t(`已启用 ${enabledSubs} / 3 个站点`, `开了 ${enabledSubs} / 3 个站点`), false);
+  const subtitleCard = subGroup.root;
+  const tbody = subGroup.body;
   const tform = el('div', 'tool-form');
   refs.subhd = switchField('SubHD');
   refs.subhd.input.checked = !!cfg.subhd.enabled;
@@ -3678,11 +4933,10 @@ async function pageConfig(view) {
   subtitleCard.appendChild(tbody);
   view.appendChild(subtitleCard);
 
-  const cleanup = el('article', 'card');
-  const ch = el('div', 'card-head');
-  ch.appendChild(el('h2', null, t('清理规则', '清理垃圾文件')));
-  cleanup.appendChild(ch);
-  const cbody = el('div', 'card-body');
+  const cleanupGroup = configGroup(t('清理规则', '清理垃圾文件'),
+    t(`${(cfg.cleanup.junk_extensions || []).length} 种垃圾扩展名`, `${(cfg.cleanup.junk_extensions || []).length} 种垃圾文件`), false);
+  const cleanup = cleanupGroup.root;
+  const cbody = cleanupGroup.body;
   const cform = el('div', 'tool-form');
   refs.junk = configArea(t('垃圾扩展名', '算作垃圾的文件类型'), t('每行一个，例如 .nfo .txt .url', '每行一个，比如 .nfo、.txt、.url'));
   refs.junk.input.value = (cfg.cleanup.junk_extensions || []).join('\n');
@@ -3726,9 +4980,12 @@ async function pageConfig(view) {
   actions.appendChild(reload);
   actions.appendChild(save);
   form.appendChild(actions);
+  const saveNote = el('div', 'save-ok');
+  saveNote.hidden = true;
   view.appendChild(form);
+  view.appendChild(saveNote);
 
-  const markDirty = () => { dirty.hidden = false; S.configDirty = true; };
+  const markDirty = () => { dirty.hidden = false; saveNote.hidden = true; S.configDirty = true; };
   view.addEventListener('input', markDirty);
   view.addEventListener('change', markDirty);
 
@@ -3793,8 +5050,32 @@ async function pageConfig(view) {
       const result = await api('/api/config', { method: 'PUT', body: updates });
       S.config = result;
       S.configDirty = false;
+      dirty.hidden = true;
+      setExpandedText(result.allowed_paths_expanded);
+      // 密钥输入框清空，占位符改为「已配置」，下次留空即保持原值
+      for (const [key, conf] of [
+        [refs.tmdbKey, result.tmdb.api_key_configured],
+        [refs.jackettKey, result.jackett.api_key_configured],
+        [refs.osKey, result.opensubtitles.api_key_configured],
+        [refs.shooterToken, result.shooter.token_configured],
+      ]) {
+        key.input.value = '';
+        key.input.placeholder = conf ? '已配置（留空保持不变）' : '未配置';
+      }
+      const srcCount = [result.tmdb.enabled, result.jackett.enabled, result.seedhub.enabled, result.dysbk.enabled].filter(Boolean).length;
+      const subCount = [result.subhd.enabled, result.opensubtitles.enabled, result.shooter.enabled].filter(Boolean).length;
+      srcGroup.hint.textContent = t(`已启用 ${srcCount} / 4 个源`, `开了 ${srcCount} / 4 个网站`);
+      subGroup.hint.textContent = t(`已启用 ${subCount} / 3 个站点`, `开了 ${subCount} / 3 个站点`);
+      cleanupGroup.hint.textContent = t(`${(result.cleanup.junk_extensions || []).length} 种垃圾扩展名`,
+        `${(result.cleanup.junk_extensions || []).length} 种垃圾文件`);
+      saveNote.textContent = '';
+      saveNote.appendChild(el('strong', null, t('已保存并立即生效', '保存好了，马上生效')));
+      saveNote.appendChild(el('span', null,
+        items.length
+          ? t(`本次共 ${items.length} 项改动，无需重启，新设置已用于后续任务。`, `这次改了 ${items.length} 项，不用重启，之后的任务就用新设置。`)
+          : t('没有改动，当前设置已确认生效。', '没有改动，当前设置就是生效状态。')));
+      saveNote.hidden = false;
       toast(t('配置已保存并生效', '保存好了，马上生效'));
-      route();
     } catch (err) {
       out.textContent = '';
       out.appendChild(errorBox({ code: err.code || 'save_failed', message: err.message }));
@@ -3816,40 +5097,132 @@ async function pageWorkbench(view) {
   const search = document.createElement('input');
   search.type = 'text';
   search.className = 'page-filter';
-  search.placeholder = t('按名称 / 标题 / 类别筛选', '找功能：试试「字幕」或「整理」');
+  search.placeholder = t('按名称 / 标题 / 用途筛选', '找功能：试试「字幕」或「整理」');
   search.value = S.filter;
-  toolbar.appendChild(search);
-  toolbar.appendChild(el('span', 'muted', t(Object.keys(S.tools).length + ' 个工具', Object.keys(S.tools).length + ' 个功能')));
+  const countSpan = el('span', 'muted', '');
+  toolbar.append(search, countSpan);
   body.appendChild(toolbar);
-  const list = el('div', 'tool-list');
+  const list = el('div', 'tool-groups');
   body.appendChild(list);
-  const panel = el('div');
-  body.appendChild(panel);
   toolsCard.appendChild(body);
   view.appendChild(toolsCard);
 
+  let storedOpen = loadWorkbenchOpen();
+  let searchOpen = {};
+  let lastQ = null;
+  let openName = null;
+  const buttons = new Map();
+  const hosts = new Map();
+
+  // 收起当前展开的卡片；关闭后把焦点还给原来那张工具卡，页面位置自然回到原处
+  const closeOpenCard = (focusBtn) => {
+    for (const host of hosts.values()) { host.textContent = ''; host.hidden = true; }
+    openName = null;
+    if (focusBtn) focusBtn.focus();
+  };
+
+  const openToolCard = (name, btn) => {
+    if (openName === name) { closeOpenCard(btn); return; }
+    closeOpenCard(null);
+    const host = hosts.get(name);
+    if (!host) return;
+    openName = name;
+    host.hidden = false;
+    host.textContent = '';
+    const bar = el('div', 'tool-open-bar');
+    bar.appendChild(el('span', 'muted', t('已展开，填好参数后执行', '展开了，填好就可以开始')));
+    const close = el('button', 'ghost small', '收起');
+    close.type = 'button';
+    close.addEventListener('click', () => closeOpenCard(btn));
+    bar.appendChild(close);
+    host.append(bar, toolCard(name));
+  };
+
   const draw = () => {
     list.textContent = '';
+    buttons.clear();
+    hosts.clear();
+    openName = null;
     const q = S.filter.trim().toLowerCase();
-    for (const spec of Object.values(S.tools)) {
-      if (q && !((spec.name + ' ' + spec.title + ' ' + spec.category + ' ' + (FRIENDLY.tool[spec.name] || '')).toLowerCase().includes(q))) continue;
-      const btn = el('button', 'tool-item');
-      btn.type = 'button';
-      btn.appendChild(el('strong', null, pick(FRIENDLY.tool, spec.name, spec.title)));
-      btn.appendChild(el('code', null, spec.name));
-      const badges = el('div', 'badges');
-      badges.appendChild(el('span', 'badge risk ' + spec.risk, pick(FRIENDLY.risk, spec.risk, spec.risk_label)));
-      badges.appendChild(el('span', 'badge', pick(FRIENDLY.category, spec.category, spec.category)));
-      btn.appendChild(badges);
-      btn.addEventListener('click', () => {
-        panel.textContent = '';
-        panel.appendChild(toolCard(spec.name));
-        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (q !== lastQ) { searchOpen = {}; lastQ = q; }
+    let shown = 0;
+    const allToolNames = new Set(Object.keys(S.tools));
+    const groups = WORKBENCH_GROUPS.slice();
+    // 兜底：任何未归入分组的工具仍然出现在工具台，避免升级后新工具「消失」
+    const known = new Set(groups.flatMap((g) => g.tools));
+    const leftovers = [...allToolNames].filter((n) => !known.has(n));
+    if (leftovers.length) groups.push({ id: 'other', title: '其他', hint: '未归类的功能', tools: leftovers });
+
+    for (const group of groups) {
+      const names = group.tools.filter((n) => S.tools[n]);
+      const matched = names.filter((n) => {
+        if (!q) return true;
+        const spec = S.tools[n];
+        const hay = (n + ' ' + spec.title + ' ' + spec.category + ' ' + pick(FRIENDLY.tool, n, '') + ' ' + toolSummary(n, spec)).toLowerCase();
+        return hay.includes(q);
       });
-      list.appendChild(btn);
+      if (q && !matched.length) continue;
+      shown += matched.length;
+
+      const section = el('section', 'tool-group');
+      const headBtn = el('button', 'tool-group-head');
+      headBtn.type = 'button';
+      const caret = el('span', 'tg-caret', '▾');
+      headBtn.append(caret, el('strong', null, group.title), el('span', 'muted', matched.length + ' 个功能'));
+      headBtn.title = group.hint || '';
+      const groupBody = el('div', 'tool-group-body');
+      const grid = el('div', 'tool-list');
+      groupBody.appendChild(grid);
+      const painter = () => {
+        const open = q ? searchOpen[group.id] !== false : storedOpen[group.id] !== false;
+        headBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        groupBody.hidden = !open;
+        caret.textContent = open ? '▾' : '▸';
+      };
+      headBtn.addEventListener('click', () => {
+        const open = q ? searchOpen[group.id] !== false : storedOpen[group.id] !== false;
+        if (q) searchOpen[group.id] = !open;
+        else { storedOpen[group.id] = !open; saveWorkbenchOpen(storedOpen); }
+        painter();
+      });
+
+      for (const name of matched) {
+        const spec = S.tools[name];
+        const btn = el('button', 'tool-item');
+        btn.type = 'button';
+        btn.appendChild(el('strong', null, pick(FRIENDLY.tool, name, spec.title)));
+        const oneLine = toolSummary(name, spec);
+        if (oneLine) btn.appendChild(el('span', 'tool-desc', oneLine));
+        const badges = el('div', 'badges');
+        badges.appendChild(el('span', 'badge risk ' + spec.risk, pick(FRIENDLY.risk, spec.risk, spec.risk_label)));
+        if (spec.long_running) badges.appendChild(el('span', 'badge', t('后台', '慢一点')));
+        btn.appendChild(badges);
+        buttons.set(name, btn);
+
+        const host = el('div', 'tool-open-host');
+        host.hidden = true;
+        hosts.set(name, host);
+        grid.appendChild(btn);
+        groupBody.appendChild(host);
+        btn.addEventListener('click', () => openToolCard(name, btn));
+      }
+      section.append(headBtn, groupBody);
+      painter();
+      list.appendChild(section);
     }
-    if (!list.childNodes.length) {
-      list.appendChild(emptyState(t('没有匹配的工具。', '没有找到匹配的功能'), t('换个关键词，或用右上角的「搜索工具」直接找。', '换个词试试，也可以点上面的搜索按钮')));
+
+    countSpan.textContent = q
+      ? t(`显示 ${shown} / ${allToolNames.size} 个工具`, `找到 ${shown} / ${allToolNames.size} 个功能`)
+      : t(`${allToolNames.size} 个工具`, `${allToolNames.size} 个功能`);
+    if (!shown) {
+      list.appendChild(emptyState({
+        title: t('没有匹配的工具。', '没有找到匹配的功能'),
+        hint: t('换个关键词，或用右上角的「搜索工具」直接找。', '换个词试试，也可以点上面的搜索按钮'),
+        action: {
+          label: t('清空搜索', '清空搜索'),
+          onClick: () => { S.filter = ''; search.value = ''; draw(); search.focus(); },
+        },
+      }));
     }
   };
   search.addEventListener('input', () => { S.filter = search.value; draw(); });
@@ -3857,7 +5230,15 @@ async function pageWorkbench(view) {
 
   // 接力/深链落到工具台时，直接展开目标工具卡（分类页覆盖不到的工具走这里）
   if (S.pending && S.tools[S.pending.tool] && !NAV.find((n) => (n.tools || []).includes(S.pending.tool))) {
-    panel.appendChild(toolCard(S.pending.tool));
+    const name = S.pending.tool;
+    const group = WORKBENCH_GROUPS.find((g) => g.tools.includes(name));
+    if (group) {
+      const q = S.filter.trim().toLowerCase();
+      if (q) searchOpen[group.id] = true; else { storedOpen[group.id] = true; saveWorkbenchOpen(storedOpen); }
+      draw();
+    }
+    const btn = buttons.get(name);
+    if (btn) openToolCard(name, btn);
   }
 
   const jobsCard = el('article', 'card');
@@ -3866,7 +5247,7 @@ async function pageWorkbench(view) {
   const jobsTools = el('div', 'toolbar');
   const statusSel = document.createElement('select');
   statusSel.setAttribute('aria-label', t('按状态筛选任务', '按状态筛选'));
-  for (const [v, txt] of [['', t('全部状态', '全部')], ['running', t('进行中', '正在跑')], ['failed', t('失败', '失败')], ['succeeded', t('已完成', '已完成')], ['queued', t('排队中', '排队中')]]) {
+  for (const [v, txt] of [['', t('全部状态', '全部')], ['running', t('进行中', '正在跑')], ['queued', t('排队中', '排队中')], ['succeeded', t('已完成', '已完成')], ['failed', t('失败', '失败')], ['canceled', t('已取消', '已取消')]]) {
     const opt = document.createElement('option');
     opt.value = v;
     opt.textContent = txt;
@@ -3878,6 +5259,9 @@ async function pageWorkbench(view) {
   jh.appendChild(jobsTools);
   jobsCard.appendChild(jh);
   const jobsBodyWrap = el('div', 'card-body');
+  jobsBodyWrap.appendChild(el('p', 'muted jobs-note',
+    t('任务在服务器上继续执行，关掉页面或切到别的页面都不会停；进行中的任务可以在这里取消，已完成的部分会保留。',
+      '任务在后台跑，关掉页面也不影响；正在跑的任务可以取消，做完的部分会保留。')));
   const jbody = el('div');
   jobsBodyWrap.appendChild(jbody);
   // 结果位放在任务列表下方：点「查看结果」只把结果插到这里，列表位置不变
@@ -3893,30 +5277,34 @@ async function pageWorkbench(view) {
     const list = statusSel.value ? jobsCache.filter((j) => j.status === statusSel.value) : jobsCache;
     jbody.textContent = '';
     if (!list.length) {
-      jbody.appendChild(emptyState(
-        jobsCache.length ? t('没有符合这个状态的任务。', '这个状态下没有任务') : t('暂无任务。', '这里还没有任务'),
-        jobsCache.length ? t('切换到「全部状态」查看所有任务。', '切回「全部」就能看到全部任务') : t('到分类页执行一个耗时功能，任务会出现在这里。', '去上面的功能里做一件事，慢的会出现在这里。'),
-      ));
+      const filtered = jobsCache.length > 0;
+      jbody.appendChild(emptyState({
+        title: filtered ? t('没有符合这个状态的任务。', '这个状态下没有任务') : t('暂无任务。', '这里还没有任务'),
+        hint: filtered ? t('切换到「全部状态」查看所有任务。', '切回「全部」就能看到全部任务') : t('到分类页执行一个耗时功能，任务会出现在这里。', '去上面的功能里做一件事，慢的会出现在这里。'),
+        action: filtered
+          ? { label: t('看全部任务', '看全部任务'), onClick: () => { statusSel.value = ''; paintJobs(); } }
+          : { label: t('去扫描媒体库', '去做一件事'), onClick: () => { location.hash = '#/scan'; } },
+      }));
       return;
     }
-    jbody.appendChild(renderJobs(list));
+    jbody.appendChild(renderJobs(list, paintJobs));
   };
   const loadJobs = async () => {
     if (document.hidden) return;
     try {
       const data = await api('/api/jobs?limit=40');
       jobsCache = data.jobs || [];
-      const sig = JSON.stringify(jobsCache.map((j) => [j.id, j.status, j.finished_at]));
+      const sig = JSON.stringify(jobsCache.map((j) => [j.id, j.status, j.finished_at, j.cancel_requested, j.progress]));
       if (sig !== lastJobsSig) { lastJobsSig = sig; paintJobs(); }
     } catch (err) {
       jbody.textContent = '';
-      jbody.appendChild(errorBox({ code: err.code, message: err.message }));
+      jbody.appendChild(errorBox({ code: err.code || 'load_failed', message: err.message }, { retry: loadJobs }));
     }
   };
   statusSel.addEventListener('change', paintJobs);
   refreshJobs.addEventListener('click', loadJobs);
   await loadJobs();
-  S.timer = setInterval(loadJobs, 8000);
+  S.timer = setInterval(loadJobs, 2000);
 
   const logCard = el('article', 'card');
   const lh = el('div', 'card-head');
@@ -4052,7 +5440,7 @@ async function boot() {
       // 与常见列表页一致：按 / 直接聚焦当前页的筛选框；正在输入时不抢焦点
       const ae = document.activeElement;
       if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)) return;
-      const box = document.querySelector('.table-filter input[type="search"]') || document.querySelector('.page-filter');
+      const box = document.querySelector('.table-filter input[type="search"]');
       if (box) {
         ev.preventDefault();
         box.focus();
@@ -4087,6 +5475,7 @@ async function boot() {
   await route();
   pollJobsIndicator();
   S.jobTimer = setInterval(pollJobsIndicator, 8000);
+  setInterval(tickJobElapsed, 1000);
 }
 
 initUiMode();

@@ -36,6 +36,7 @@ from .config import (
     TmdbConfig,
 )
 from .opensubtitles import OpensubtitlesError
+from .progress import check_canceled, mark_partial, report as report_progress
 from .security import InvalidArguments, PathGuard
 from .shooter import ShooterError
 from .subhd import (
@@ -1084,12 +1085,24 @@ def fill_missing_subtitles(
     n_probe_err = 0
     n_budget_skipped = 0
     budget_exhausted = False
+    canceled = False
+    processed = 0
+    total_groups = len(groups)
     deadline = (
         time.monotonic() + float(budget_seconds) if budget_seconds and budget_seconds > 0 else None
     )
+    report_progress("scan", "扫描视频并统计缺失字幕",
+                    done=len(videos), total=len(videos))
 
     # 3. 逐季决策与执行
-    for g in groups:
+    for idx, g in enumerate(groups, 1):
+        processed = idx - 1
+        # 合作式取消：季边界停下，已下载并落盘的字幕保留
+        if check_canceled():
+            canceled = True
+            break
+        report_progress("fill", "逐季补字幕", done=processed, total=total_groups,
+                        current=f"{g['title']} 第 {g['season']} 季")
         # P0-4：wall-clock 预算——超时后不再发起新的季/集搜索下载，剩余季显式标记
         if deadline is not None and time.monotonic() >= deadline:
             budget_exhausted = True
@@ -1335,7 +1348,15 @@ def fill_missing_subtitles(
             report["reason"] = f"group_error: {exc}"
             logger.warning("季 %s S%s 批处理异常: %s", g["title"], g["season"], exc)
 
-    return {
+    else:
+        processed = total_groups
+
+    if canceled:
+        report_progress("fill", "已取消，保留已完成部分", done=processed, total=total_groups)
+    else:
+        report_progress("fill", "逐季补字幕", done=processed, total=total_groups)
+
+    result = {
         "ok": True,
         "dry_run": dry_run,
         "lang": lang,
@@ -1361,3 +1382,4 @@ def fill_missing_subtitles(
         "seasons": season_reports,
         "scan": scan_info,
     }
+    return mark_partial(result) if canceled else result

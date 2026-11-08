@@ -44,6 +44,7 @@ from .media import (
     stream_has_chinese,
 )
 from .organizer import _audit, new_operation_id
+from .progress import check_canceled, mark_partial, report
 from .security import AccessDenied, InvalidArguments, PathGuard, expand_roots
 
 logger = logging.getLogger(__name__)
@@ -589,11 +590,21 @@ def media_mux_subtitles(
     errors: list[dict] = []
     skipped_count = 0
     budget_exhausted = False
+    canceled = False
+    processed = 0
+    total_videos = len(videos_to_check)
     deadline = (
         time.monotonic() + float(budget_seconds) if budget_seconds and budget_seconds > 0 else None
     )
+    report("mux", "扫描待混流的视频", done=0, total=total_videos)
 
-    for v in videos_to_check:
+    for idx, v in enumerate(videos_to_check, 1):
+        processed = idx - 1
+        # 合作式取消：只在条目边界停下，已完成的正式文件全部保留
+        if check_canceled():
+            canceled = True
+            break
+        report("mux", "混流字幕", done=processed, total=total_videos, current=v.name)
         # P0-4：wall-clock 预算——超时后不再探测/混流新文件，返回已完成部分
         if deadline is not None and time.monotonic() >= deadline:
             budget_exhausted = True
@@ -670,7 +681,22 @@ def media_mux_subtitles(
                     "error": exec_res.get("error", "未知错误"),
                 })
 
-    return {
+    else:
+        processed = total_videos
+
+    if canceled:
+        # 取消清理：只删混流中断留下的 .mux_tmp.mkv，已完成并落盘的正式文件保留
+        for item in videos_to_check[:processed + 1]:
+            tmp = item.with_name(f".{item.stem}.mux_tmp.mkv")
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        report("mux", "已取消，保留已完成部分", done=processed, total=total_videos)
+    else:
+        report("mux", "混流字幕", done=processed, total=total_videos)
+
+    result = {
         "ok": True,
         "dry_run": dry_run,
         "scanned_count": len(videos_to_check),
@@ -687,3 +713,4 @@ def media_mux_subtitles(
             "执行前请确认 dry_run 计划"
         ),
     }
+    return mark_partial(result) if canceled else result

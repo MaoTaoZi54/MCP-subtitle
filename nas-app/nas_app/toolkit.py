@@ -41,6 +41,7 @@ from nas_mcp import media as media_tools
 from nas_mcp import missing as missing_tools
 from nas_mcp import mux as mux_tools
 from nas_mcp import organizer as organizer_tools
+from nas_mcp import progress as progress_ctl
 from nas_mcp import region as region_tools
 from nas_mcp import resolver as resolver_tools
 from nas_mcp import rollback as rollback_tools
@@ -1103,12 +1104,15 @@ class ToolRegistry:
                 language_split: 开启后电影/剧集按国语/外语分入子目录（ffprobe 音轨判断）
             """
             cfg = self.get_config()
+            progress_ctl.report("plan", "生成整理计划", done=0)
             plan = organizer_tools.plan_session(
                 self._guard(), cfg.limits, cfg.video_extensions, cfg.subtitle_extensions,
                 cfg.media, cfg.organizer, path=path, mode=mode,
                 preexisting_empty_scope=preexisting_empty_scope, tmdb_cfg=cfg.tmdb,
                 language_split=language_split,
             )
+            planned = len(plan.get("plan") or []) if isinstance(plan, dict) else 0
+            progress_ctl.report("plan", "生成整理计划", done=planned, total=planned)
             if dry_run:
                 return plan
             return organizer_tools.execute_plan(

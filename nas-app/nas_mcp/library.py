@@ -22,6 +22,7 @@ from . import resolver as resolver_tools
 from .config import Limits, MediaConfig, TmdbConfig
 from .fs import _flat_records, _walk_records
 from .fs_utils import ErrorSink, make_skip_matcher, mark_incomplete, normalize_list_arg
+from .progress import check_canceled, mark_partial, report
 from .release import parse_release, quality_score_from_dimensions, bitrate_tiebreaker
 from .security import InvalidArguments, PathGuard, expand_roots
 from .subhd import parse_video_filename
@@ -242,6 +243,19 @@ def _bit_depth(pix_fmt: str | None) -> int | None:
     return None
 
 
+_HDR_LABELS = ("Dolby Vision", "HDR10+", "HDR10", "HLG", "HDR")
+
+
+def _hdr_label(value: str | None) -> str | None:
+    """把 ffprobe 的复合 HDR 标签（如 "Dolby Vision + HDR10"）归一成评分键。"""
+    if not value:
+        return None
+    for label in _HDR_LABELS:
+        if label in value:
+            return label
+    return value
+
+
 def assess_file(video: Path, probe: dict | None) -> dict:
     """把 ffprobe 真实维度 + 文件名来源 token 组合成质量评估（§31）。
 
@@ -261,7 +275,7 @@ def assess_file(video: Path, probe: dict | None) -> dict:
         v = probe["video"]
         probe_resolution = v.get("resolution")
         resolution = _RES_FROM_PROBE.get(probe_resolution, probe_resolution) or resolution
-        hdr = v.get("hdr_format") or hdr
+        hdr = _hdr_label(v.get("hdr_primary") or v.get("hdr_format")) or hdr
         video_codec = _CODEC_FROM_PROBE.get(str(v.get("codec") or "").lower(), video_codec)
         if v.get("pixel_format"):
             bit_depth = _bit_depth(v.get("pixel_format")) or bit_depth
@@ -367,6 +381,7 @@ def _analyze_all(
     recursive: bool,
 ) -> dict:
     """采集 → 逐个 probe/身份识别/质量评估，返回明细与预算元信息。"""
+    report("collect", "采集待分析视频", current=path or "media_roots")
     targets, meta = _collect_targets(
         guard, limits, video_exts, subtitle_exts, media_roots, mcfg,
         path=path, paths=paths, recursive=recursive,
@@ -375,8 +390,18 @@ def _analyze_all(
     probe_attempts = 0
     probed_files = 0
     probe_failures = 0
+    processed = 0
+    canceled = False
 
     for video in targets:
+        if check_canceled():
+            canceled = True
+            break
+        report(
+            "analyze", "探测并评估视频",
+            done=processed, total=len(targets), current=video.name,
+        )
+        processed += 1
         probe = None
         probe_error: str | None = None
         if probe_attempts < mcfg.max_probe_files:
@@ -417,6 +442,10 @@ def _analyze_all(
             "subtitle_checked": probe is not None,
         })
 
+    if canceled:
+        report("canceled", "已取消，保留已完成部分", done=processed, total=len(targets))
+    else:
+        report("done", "分析完成", done=processed, total=len(targets))
     return {
         "items": items,
         "total_collected": len(targets),
@@ -429,6 +458,7 @@ def _analyze_all(
         "walk_errors_summary": meta.get("walk_errors_summary"),
         "walk_denied_sample": meta.get("walk_denied_sample", []),  # T3
         "tmdb_enabled": tcfg.enabled,
+        "canceled": canceled,
     }
 
 
@@ -550,12 +580,23 @@ def quality_analyze(
         )
     # 质量分析不需要目录遍历/字幕扩展名，给空集合即可；显式列表已限定为文件
     dummy_limits = Limits()  # 仅文件列表时不使用限额
+    report("collect", "采集待分析视频", current=path or "paths")
     targets, meta = _collect_targets(
         guard, dummy_limits, video_exts, frozenset(), (), mcfg,
         path=path, paths=paths, recursive=False,
     )
     results = []
+    processed = 0
+    canceled = False
     for video in targets:
+        if check_canceled():
+            canceled = True
+            break
+        report(
+            "probe", "探测画质与音质",
+            done=processed, total=len(targets), current=video.name,
+        )
+        processed += 1
         try:
             probe = media_tools.probe_video(
                 video, mcfg.ffprobe_path, mcfg.ffprobe_timeout_seconds
@@ -564,20 +605,30 @@ def quality_analyze(
         except media_tools.ProbeError as exc:
             probe, probe_error = None, str(exc)
         q = assess_file(video, probe)
+        details = probe or {}
         results.append({
             "name": video.name, "path": str(video),
             "probe_ok": probe is not None, "probe_error": probe_error,
             "duration_seconds": probe["duration_seconds"] if probe else None,
             "size_bytes": probe["size_bytes"] if probe else None,
+            "video_details": details.get("video"),
+            "audio_details": details.get("audio") or [],
             **q,
         })
-    return mark_incomplete(
+    result = mark_incomplete(
         {"ok": True, "total": len(results), "results": results},
         permission_denied=(meta.get("walk_errors_summary") or {}).get(
             "permission_denied", 0),
         denied_sample=meta.get("walk_denied_sample", []),
         empty=not results,
     )
+    if canceled:
+        report("canceled", "已取消，保留已完成部分",
+               done=processed, total=len(targets))
+        mark_partial(result)
+    else:
+        report("done", "画质分析完成", done=processed, total=len(targets))
+    return result
 
 
 def duplicate_detect(
@@ -627,13 +678,16 @@ def duplicate_detect(
         "suspects": suspects,
     }
     # T3：一个文件都没采到 + 权限错误 → "无重复"结论不可信
-    return mark_incomplete(
+    result = mark_incomplete(
         result,
         permission_denied=(data.get("walk_errors_summary") or {}).get(
             "permission_denied", 0),
         denied_sample=data.get("walk_denied_sample", []),
         empty=data["total_collected"] == 0,
     )
+    if data.get("canceled"):
+        mark_partial(result)
+    return result
 
 
 def _media_kind(item: dict) -> str:
@@ -778,10 +832,13 @@ def audit(
         "errors_summary": data.get("walk_errors_summary"),
     }
     # T3：全库扫描 0 文件 + 权限错误 → 审计统计不可信
-    return mark_incomplete(
+    result = mark_incomplete(
         out,
         permission_denied=(data.get("walk_errors_summary") or {}).get(
             "permission_denied", 0),
         denied_sample=data.get("walk_denied_sample", []),
         empty=data["total_collected"] == 0,
     )
+    if data.get("canceled"):
+        mark_partial(result)
+    return result

@@ -541,7 +541,7 @@ def create_server(cfg: NasConfig) -> MCPServer:
         video_path: str = "",
         dry_run: bool = True,
         delete_external: bool = False,
-        replace_original: bool = True,
+        replace_original: bool = False,
         force: bool = False,
         limit: int = 50,
     ) -> dict:
@@ -614,6 +614,7 @@ def create_server(cfg: NasConfig) -> MCPServer:
     def organize_media(
         path: str, mode: str = "all", dry_run: bool = True,
         preexisting_empty_scope: str = "library_root",
+        language_split: bool = False,
     ) -> dict:
         """把杂乱的下载目录整理成标准媒体库结构（L1 计划 / L2 执行 / L3 删除）。
 
@@ -659,11 +660,13 @@ def create_server(cfg: NasConfig) -> MCPServer:
             preexisting_empty_scope: 预存空目录收集范围："library_root"（默认，
                 扫描全部库根）或 "target_subtree"（仅本轮操作目标子树内，
                 对应 Sonarr 只清自己管辖目录的保守语义）
+            language_split: 开启后电影/剧集按国语/外语分入子目录（ffprobe 音轨判断）
         """
         plan = organizer_tools.plan_session(
             guard, cfg.limits, cfg.video_extensions, cfg.subtitle_extensions,
             cfg.media, cfg.organizer, path=path, mode=mode,
             preexisting_empty_scope=preexisting_empty_scope,
+            language_split=language_split,
             tmdb_cfg=cfg.tmdb,
         )
         if dry_run:
@@ -808,8 +811,13 @@ def create_server(cfg: NasConfig) -> MCPServer:
         且不计入 site_errors。三路原始结果只在插件内部合并：按 infohash/
         网盘链接去重 → 同一作品按「有网盘直链 > 有做种数 > 画质标签」排序、
         每部只留 top3 版本 → 总闸 20 条。每条统一 schema：
-        {title, magnet, pan_url, size, seeders, quality_tag, source, updated}
-        （缺失置 null，不臆造）。返回附 sources/merged/truncated/site_errors
+        {title, magnet, pan_url, size, seeders, quality_tag, source, updated,
+        verified, confidence, mismatch, warning, real_files}
+        （缺失置 null，不臆造）。confidence：high=标题完整命中且季集/年份一致、
+        partial=部分命中（缺季/集/年份等）、suspicious=标题命中但做种/体积明显异常、
+        mismatch=标题/年份/季集冲突、unverified=无法判定；verified 仅网盘经
+        pan_probe 实时探测为真，磁力未探测内容恒为 false；warning 写明判定依据
+        （磁力条目会标注「未校验实际内容」）。返回附 sources/merged/truncated/site_errors
         统计；sources 中 seedhub=0 且 seedhub_skipped_by_language=true 表示
         被语言路由跳过（英文查询的正常表现，非故障）。
 

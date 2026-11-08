@@ -24,6 +24,7 @@ from . import resolver as resolver_tools
 from .config import Limits, MediaConfig, TmdbConfig, TvmazeConfig
 from .fs import _flat_records, _walk_records
 from .fs_utils import ErrorSink, make_skip_matcher, mark_incomplete_from_sink, normalize_list_arg
+from .progress import check_canceled, mark_partial, report
 from .resolver import ResolverError
 from .security import InvalidArguments, PathGuard, expand_roots
 from .subhd import parse_video_filename
@@ -121,17 +122,35 @@ def _scan_local_episodes(
             "episode": q.episode,
         })
 
+    target_count = len(file_targets) + len(dir_targets)
+    processed_targets = 0
     for f in file_targets:
+        if check_canceled():
+            break
+        report(
+            "scan", "扫描本地剧集文件",
+            done=processed_targets, total=target_count, current=str(f),
+        )
         _emit(f)
+        processed_targets += 1
     for base in dir_targets:
+        if check_canceled():
+            break
+        report(
+            "scan", "扫描本地剧集文件",
+            done=processed_targets, total=target_count, current=str(base),
+        )
         for rec in _walk_records(
             base, guard, limits.max_scan_files, limits.max_list_depth,
             include_dirs=False, video_exts=video_exts, subtitle_exts=subtitle_exts,
             on_error=_on_error, state=state,
         ):
+            if check_canceled():
+                break
             if rec["media_category"] != "video":
                 continue
             _emit(Path(rec["path"]))
+        processed_targets += 1
 
     return records, sink, state["truncated"]
 
@@ -236,6 +255,11 @@ def _build_show_entry(
               "episode": r["episode"]} for r in local_records]
     entry["files"] = files
 
+    if check_canceled():
+        entry["title_resolution"] = "canceled"
+        entry["reason"] = "canceled"
+        return entry
+
     if not tcfg.enabled and not (tvcfg is not None and tvcfg.enabled):
         entry["reason"] = "expected_episode_set_unavailable"
         entry["title_resolution"] = "tmdb_disabled"
@@ -274,7 +298,15 @@ def _build_show_entry(
 
     # 若该季无本地文件：actual 为空，missing=expected（全部缺失）
     per_season: list[dict] = []
+    season_canceled = False
     for s in seasons_to_check:
+        if check_canceled():
+            season_canceled = True
+            break
+        report(
+            "season", "获取官方集数并比对",
+            done=len(per_season), total=len(seasons_to_check), current=f"Season {s}",
+        )
         expected = _expected_episodes(client, entity_id, s)
         if expected is None:
             per_season.append({
@@ -322,6 +354,15 @@ def _build_show_entry(
             entry["partial_seasons"] = [
                 ps["season"] for ps in per_season if ps["reason"] is not None
             ]
+
+    if season_canceled:
+        checked = {ps["season"] for ps in per_season}
+        unchecked = [s for s in seasons_to_check if s not in checked]
+        if unchecked:
+            entry["partial_seasons"] = unchecked
+        if not per_season:
+            entry["title_resolution"] = "canceled"
+            entry["reason"] = "canceled"
 
     return entry
 
@@ -398,7 +439,14 @@ def missing_episodes(
             "errors_summary": sink.summary(),
         }
         # T3：本地一个文件都没扫到 + 权限错误 → 结果不可信
-        return mark_incomplete_from_sink(result, sink, empty=not matched)
+        result = mark_incomplete_from_sink(result, sink, empty=not matched)
+        if check_canceled():
+            report("canceled", "已取消，保留已完成部分",
+                   done=len(matched), total=len(records))
+            mark_partial(result)
+        else:
+            report("done", "缺集检测完成", done=len(matched), total=len(matched))
+        return result
 
     # ---- 扫剧模式（title=null）----
     records, sink, scan_truncated = _scan_local_episodes(
@@ -414,9 +462,16 @@ def missing_episodes(
 
     # 对每个组解析并构造条目
     all_entries: list[dict] = []
-    for tn, recs in groups.items():
+    group_items = list(groups.items())
+    for group_index, (tn, recs) in enumerate(group_items):
+        if check_canceled():
+            break
         # 取一个代表性原始片名（首条记录）
         rep_title = recs[0]["title"]
+        report(
+            "show", "逐剧比对缺集",
+            done=group_index, total=len(group_items), current=rep_title,
+        )
         entry = _build_show_entry(
             tcfg, tvcfg, title=rep_title, year=group_year.get(tn),
             season=season, local_records=recs,
@@ -428,7 +483,7 @@ def missing_episodes(
     next_offset = offset + len(page) if offset + len(page) < len(all_entries) else None
     truncated = next_offset is not None
 
-    return {
+    result = {
         "ok": True,
         "title": None,
         "season": season,
@@ -443,5 +498,11 @@ def missing_episodes(
         "errors": sink.errors,
         "errors_summary": sink.summary(),
     }
-    # T3：一部剧都没扫到 + 权限错误 → 结果不可信
-    return mark_incomplete_from_sink(result, sink, empty=not all_entries)
+    if check_canceled():
+        report("canceled", "已取消，保留已完成部分",
+               done=len(all_entries), total=len(group_items))
+        mark_partial(result)
+    else:
+        report("done", "缺集检测完成",
+               done=len(all_entries), total=len(all_entries))
+    return result

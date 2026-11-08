@@ -21,6 +21,7 @@ from pathlib import Path
 from .config import Limits, MediaConfig
 from .fs import _flat_records, _walk_records
 from .fs_utils import ErrorSink, make_record, make_skip_matcher, mark_incomplete_from_sink
+from .progress import check_canceled, mark_partial, report
 from .security import InvalidArguments, PathGuard, expand_roots
 
 # ---------------------------------------------------------------- ffprobe
@@ -93,19 +94,12 @@ def probe_video(video: Path, ffprobe_path: str, timeout: float) -> dict:
                 "resolution": _resolution_label(stream.get("width"), stream.get("height")),
                 "fps": _parse_fps(stream.get("avg_frame_rate") or stream.get("r_frame_rate")),
                 "bit_rate": _to_int(stream.get("bit_rate")),
+                "bit_depth": _bit_depth(stream.get("pix_fmt"), stream.get("bits_per_raw_sample")),
                 "language": lang,
                 **_color_and_hdr(stream),
             }
         elif stype == "audio":
-            audio.append({
-                "codec": stream.get("codec_name"),
-                "profile": stream.get("profile"),
-                "language": lang,
-                "channels": stream.get("channels"),
-                "channel_layout": stream.get("channel_layout"),
-                "bit_rate": _to_int(stream.get("bit_rate")),
-                "title": tags.get("title") or None,
-            })
+            audio.append(_audio_info(stream, tags, lang))
         elif stype == "subtitle":
             disp = stream.get("disposition") or {}
             embedded.append({
@@ -139,6 +133,99 @@ def _to_int(value) -> int | None:
         return None
 
 
+# 杜比视界兼容层标识（dv_bl_signal_compatibility_id）→ 中文说明
+_DV_COMPAT_LABELS = {
+    0: "仅杜比视界（无兼容层）",
+    1: "兼容 HDR10",
+    2: "兼容 SDR",
+    4: "兼容 HLG",
+}
+# ffprobe codec_name → 紧凑音频编码名
+_AUDIO_CODEC_LABELS = {
+    "truehd": "TrueHD",
+    "eac3": "DD+",
+    "ac3": "AC-3",
+    "dts": "DTS",
+    "aac": "AAC",
+    "flac": "FLAC",
+    "opus": "Opus",
+    "vorbis": "Vorbis",
+    "mp3": "MP3",
+    "pcm_s16le": "PCM",
+    "pcm_s24le": "PCM",
+    "pcm_bluray": "PCM",
+}
+_DTS_PROFILE_RE = re.compile(r"dts[:\-\s]?x|dts[\s\-]?hd[\s\-]?ma|dts[\s\-]?hd", re.IGNORECASE)
+_ATMOS_RE = re.compile(r"atmos|joc", re.IGNORECASE)
+
+
+def _bit_depth(pix_fmt, bits_per_raw_sample=None) -> int | None:
+    """从像素格式/原始位深字段取位深（8/10/12 bit）。"""
+    raw = _to_int(bits_per_raw_sample)
+    if raw and 0 < raw <= 32:
+        return raw
+    m = re.search(r"p(\d{2,3})(?:le|be)?$", str(pix_fmt or ""))
+    return int(m.group(1)) if m else None
+
+
+def _channel_layout_label(layout, channels) -> str | None:
+    """声道布局标签：优先 ffprobe 的 channel_layout（保留 5.1.2/7.1.4），
+    缺失时按声道数给常用布局（1.0/2.0/5.1/7.1）。"""
+    text = re.sub(r"\(.*?\)", "", str(layout or "")).strip()
+    if text:
+        return text
+    n = _to_int(channels)
+    return {1: "1.0", 2: "2.0", 6: "5.1", 8: "7.1"}.get(n) or (f"{n} 声道" if n else None)
+
+
+def _audio_info(stream: dict, tags: dict, lang: str | None) -> dict:
+    """音频流：编码、声道布局与 Dolby Atmos / DTS:X 等认证规格。"""
+    codec = str(stream.get("codec_name") or "").lower()
+    profile = str(stream.get("profile") or "")
+    title = str(tags.get("title") or "")
+    blob = f"{profile} {title} {codec}".lower()
+
+    codec_label = _AUDIO_CODEC_LABELS.get(codec) or codec.upper() or None
+    dts_profile = None
+    if codec == "dts":
+        m = _DTS_PROFILE_RE.search(profile or title)
+        if m:
+            raw = m.group(0).upper().replace("-", "-")
+            if "MA" in raw:
+                dts_profile = "DTS-HD MA"
+            elif "X" in raw.split("DTS")[-1]:
+                dts_profile = "DTS:X"
+            else:
+                dts_profile = "DTS-HD"
+            codec_label = dts_profile
+
+    atmos = bool(_ATMOS_RE.search(blob)) and codec in ("truehd", "eac3", "ac3")
+    atmos_type = None
+    if atmos:
+        atmos_type = "TrueHD Atmos" if codec == "truehd" else "DD+ JOC"
+    dts_x = bool(re.search(r"dts[:\-\s]?x", blob)) or dts_profile == "DTS:X"
+
+    return {
+        "codec": stream.get("codec_name"),
+        "codec_label": codec_label,
+        "profile": stream.get("profile"),
+        "language": lang,
+        "channels": stream.get("channels"),
+        "channel_layout": stream.get("channel_layout"),
+        "channel_layout_label": _channel_layout_label(
+            stream.get("channel_layout"), stream.get("channels")
+        ),
+        "bit_rate": _to_int(stream.get("bit_rate")),
+        "bit_depth": _bit_depth(None, stream.get("bits_per_raw_sample")),
+        "sample_rate": _to_int(stream.get("sample_rate")),
+        "title": tags.get("title") or None,
+        "atmos": atmos,
+        "atmos_type": atmos_type,
+        "dts_x": dts_x,
+        "dts_profile": dts_profile,
+    }
+
+
 def _color_and_hdr(stream: dict) -> dict:
     """从视频流提取色彩空间与 HDR/Dolby Vision 信息（需求 2.0 §10/§31）。
 
@@ -161,7 +248,7 @@ def _color_and_hdr(stream: dict) -> dict:
     primaries = _field("color_primaries_name", "color_primaries").lower()
     color_space = _field("color_space_name", "color_space")
     codec = str(stream.get("codec_name") or "").lower()
-    side_types, dv_profile = _scan_side_data(stream.get("side_data_list"))
+    side_types, dv = _scan_side_data(stream.get("side_data_list"))
 
     is_pq = transfer == "smpte2084"
     is_hlg = transfer == "arib-std-b67"
@@ -172,46 +259,100 @@ def _color_and_hdr(stream: dict) -> dict:
     )
     is_hdr10plus = any("hdr dynamic metadata" in t for t in side_types)
 
+    dv_profile = dv.get("dv_profile")
+    compat = dv.get("dv_bl_signal_compatibility_id")
+    if compat is None:
+        compat = dv.get("dv_profile_compatibility")
+    profile_label = None
+    if isinstance(dv_profile, int):
+        profile_label = f"Profile {dv_profile}"
+        # Profile 8 的 .1/.2/.4 由兼容层决定：HDR10 / SDR / HLG
+        if dv_profile == 8 and compat in (1, 2, 4):
+            profile_label += f".{compat}"
+    compat_label = _DV_COMPAT_LABELS.get(compat) if isinstance(compat, int) else None
+
+    layers = None
+    flags = [
+        (bool(dv.get("bl_present_flag")), "BL"),
+        (bool(dv.get("el_present_flag")), "EL"),
+        (bool(dv.get("rpu_present_flag")), "RPU"),
+    ]
+    if any(flag for flag, _ in flags):
+        layers = "+".join(name for flag, name in flags if flag)
+
+    # HDR 基础层（与杜比视界并列展示，不互相替代）：
+    # 杜比视界 Profile 5 / 兼容标识 0 没有 HDR10 兼容层，不能标成 HDR10。
+    base: list[str] = []
+    if is_hdr10plus:
+        base.append("HDR10+")
+    elif is_pq:
+        base.append("HDR10")
+    if is_hlg and "HLG" not in base:
+        base.append("HLG")
+    if is_dv:
+        if compat == 0 or (dv_profile == 5 and compat not in (1, 4)):
+            base = []
+        elif compat == 2:
+            base = [x for x in base if x not in ("HDR10", "HLG")]
+        elif compat == 4 and "HLG" not in base:
+            base.append("HLG")
+        elif compat == 1 and "HDR10" not in base and "HDR10+" not in base:
+            base.append("HDR10")
+
     formats: list[str] = []
     if is_dv:
         formats.append("Dolby Vision")
-    if is_hdr10plus:
-        formats.append("HDR10+")
-    elif is_pq:
-        formats.append("HDR10")
-    if is_hlg:
-        formats.append("HLG")
-
+    formats.extend(base)
     hdr_format = " + ".join(formats) if formats else None
+    range_label = " · ".join(
+        ([profile_label or "Dolby Vision"] if is_dv else []) + base
+    ) if formats else "SDR"
+    hdr_primary = formats[0] if formats else None
+
     return {
         "hdr": bool(formats),
         "hdr_format": hdr_format,
+        "hdr_primary": hdr_primary,
+        "hdr_types": formats or None,
+        "dynamic_range": range_label,
+        "sdr": not bool(formats),
+        "hdr10": "HDR10" in formats,
+        "hdr10_plus": "HDR10+" in formats,
+        "hlg": "HLG" in formats,
+        "dolby_vision": is_dv,
+        "dv_profile": dv_profile if isinstance(dv_profile, int) else None,
+        "dv_profile_label": profile_label,
+        "dv_level": dv.get("dv_level") if isinstance(dv.get("dv_level"), int) else None,
+        "dv_bl_signal_compatibility_id": compat if isinstance(compat, int) else None,
+        "dv_compatibility_label": compat_label,
+        "dv_layers": layers,
         "color_space": color_space or None,
         "color_primaries": primaries or None,
         "color_transfer": transfer or None,
-        "dv_profile": dv_profile,
     }
 
 
-def _scan_side_data(side_list) -> tuple[set[str], int | None]:
-    """收集 side_data_list 中的类型名（小写）与 Dolby Vision profile。"""
+def _scan_side_data(side_list) -> tuple[set[str], dict]:
+    """收集 side_data_list 中的类型名（小写）与完整 Dolby Vision 配置记录。"""
     types: set[str] = set()
-    dv_profile: int | None = None
+    dv: dict = {}
     if not isinstance(side_list, list):
-        return types, dv_profile
+        return types, dv
     for sd in side_list:
         if not isinstance(sd, dict):
             continue
         st = str(sd.get("side_data_type") or "").lower()
         if st:
             types.add(st)
-        if "dovi" in st and dv_profile is None:
-            for key in ("dv_profile", "dv_profile_compatibility"):
-                v = sd.get(key)
-                if isinstance(v, int):
-                    dv_profile = v
-                    break
-    return types, dv_profile
+        if "dovi" in st or "dolby-vision" in st:
+            for key in (
+                "dv_profile", "dv_level", "dv_bl_signal_compatibility_id",
+                "dv_profile_compatibility", "bl_present_flag", "el_present_flag",
+                "rpu_present_flag", "dv_version_major", "dv_version_minor",
+            ):
+                if key in sd and sd[key] is not None and key not in dv:
+                    dv[key] = sd[key]
+    return types, dv
 
 
 def _parse_fps(value: str | None) -> float | None:
@@ -666,7 +807,15 @@ def scan_media(
             info["chinese_subtitle_sources"] = info["chinese_subtitle_sources"] + ["embedded"]
             info["has_chinese_subtitle"] = True
 
-    for base in bases:
+    canceled = False
+    for base_index, base in enumerate(bases, 1):
+        if check_canceled():
+            canceled = True
+            break
+        report(
+            "scan", "扫描目录并采集视频",
+            done=base_index - 1, total=len(bases), current=str(base),
+        )
         if not base.is_dir():
             add_error(base, "目录不存在或不可访问，已跳过")
             continue
@@ -679,9 +828,20 @@ def scan_media(
         else:
             records = _flat_records(base, guard, video_exts, subtitle_exts, on_walk_error)
 
+        processed_videos = 0
         for record in records:
             if record["media_category"] != "video":
                 continue
+            if check_canceled():
+                canceled = True
+                break
+            # 目录遍历是惰性的：进入文件前无法预知本根总量，total 留空；
+            # done 表示已处理（含跳过）的视频数，保证取消能逐文件生效。
+            report(
+                "analyze", "分析视频文件",
+                done=processed_videos, total=None, current=record["name"],
+            )
+            processed_videos += 1
             # 文件名跳过模式（家庭录像/成人内容）：不计入结果，单独计数
             if is_skipped(record["name"]):
                 skipped_by_filter += 1
@@ -737,6 +897,9 @@ def scan_media(
                         try_probe(fpath, info)
                     videos.append(info)
 
+        if canceled:
+            break
+
     result = {
         "ok": True,
         "roots": [str(b) for b in bases],
@@ -761,7 +924,13 @@ def scan_media(
         "videos": videos,
     }
     # T3：分页窗口可能为空但库里有数据，空的判定用 total_matched
-    return mark_incomplete_from_sink(result, sink, empty=total_matched == 0)
+    result = mark_incomplete_from_sink(result, sink, empty=total_matched == 0)
+    if canceled:
+        report("canceled", "已取消，保留已完成部分", done=scanned_files, current=None)
+        mark_partial(result)
+    else:
+        report("done", "扫描完成", done=scanned_files, total=scanned_files)
+    return result
 
 
 def check_subtitle(

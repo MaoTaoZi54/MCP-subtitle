@@ -35,6 +35,7 @@ from .config import CleanupConfig, Limits, MediaConfig, OrganizerConfig
 from .fs import _walk_records
 from .fs_utils import normalize_list_arg
 from .organizer import _audit, new_operation_id
+from .progress import check_canceled, mark_partial, report
 from .security import AccessDenied, InvalidArguments, PathGuard, expand_roots, is_within
 
 logger = logging.getLogger(__name__)
@@ -249,6 +250,9 @@ def cleanup(
     scan_roots: list[Path] = []
     candidates: list[tuple[Path, int, float]] = []  # (路径, size, mtime epoch)
     scan_truncated = False
+    canceled = False
+    scan_seen = 0
+    report("scan", "扫描候选文件", done=0)
 
     if files is not None:
         # ---- files 显式清单（§20）：先整体做范围校验，任一越界整体拒绝 ----
@@ -306,6 +310,9 @@ def cleanup(
                 errors.append({"path": str(p), "error": message})
 
         for root in scan_roots:
+            if canceled or check_canceled():
+                canceled = True
+                break
             if root.is_file():
                 try:
                     st = root.stat()
@@ -323,6 +330,13 @@ def cleanup(
                 include_dirs=False, video_exts=video_exts, subtitle_exts=subtitle_exts,
                 on_error=on_error, state=walk_state,
             ):
+                scan_seen += 1
+                # 深扫描可能有上千条目：每 100 条才检查取消并上报（单次只改内存）
+                if scan_seen % 100 == 0:
+                    if check_canceled():
+                        canceled = True
+                        break
+                    report("scan", "扫描候选文件", done=scan_seen)
                 try:
                     mtime_epoch = datetime.fromisoformat(record["mtime"]).timestamp()
                 except ValueError:
@@ -330,13 +344,24 @@ def cleanup(
                 candidates.append(
                     (Path(record["path"]), int(record["size_bytes"] or 0), mtime_epoch)
                 )
+            if canceled:
+                break
         scan_truncated = bool(walk_state.get("truncated"))
 
     # ---- 分类 + 保护判断（全量评估，计数对整个范围有意义） ----
     now = datetime.now().timestamp()
     items: list[dict] = []
     counts = {"media": 0, "media_junk": 0, "personal_video": 0, "unknown": 0, "deletable": 0}
-    for fpath, size, mtime_epoch in candidates:
+    total_candidates = len(candidates)
+    report("classify", "分类候选文件", done=0, total=total_candidates)
+    for idx, (fpath, size, mtime_epoch) in enumerate(candidates, 1):
+        if canceled or check_canceled():
+            canceled = True
+            break
+        # 上千条目场景每 100 条上报一次，避免主流程被逐条进度更新拖慢
+        if idx % 100 == 0 or idx == total_candidates:
+            report("classify", "分类候选文件", done=idx - 1, total=total_candidates,
+                   current=fpath.name)
         item = _evaluate(
             fpath, size=size, mtime_epoch=mtime_epoch, now=now,
             compiled_skip=compiled_skip, junk_exts=junk_exts,
@@ -387,6 +412,11 @@ def cleanup(
         },
     }
 
+    if canceled:
+        report("classify", "已取消，保留已完成部分", done=len(items), total=total_candidates)
+        return mark_partial(result)
+    report("classify", "分类候选文件", done=len(items), total=total_candidates)
+
     if dry_run:
         return result  # §27：默认只出计划，不改任何文件
 
@@ -414,9 +444,17 @@ def cleanup(
     result["operation_id"] = operation_id
     deleted: list[str] = result["execution"]["deleted"]
     failed: list[dict] = result["execution"]["failed"]
+    exec_total = sum(1 for it in page if it.get("action") == "delete")
+    exec_done = 0
+    report("delete", "删除垃圾文件", done=0, total=exec_total)
     for item in page:
         if item["action"] != "delete":
             continue
+        if canceled or check_canceled():
+            canceled = True
+            break
+        report("delete", "删除垃圾文件", done=exec_done, total=exec_total,
+               current=Path(str(item.get("path"))).name)
         # 执行前复核：五重门缺一不可（§28），PathGuard 重过一遍（防路径篡改）
         if item["classification"] != "media_junk" or not item["cleanup_allowed"]:
             continue
@@ -439,10 +477,15 @@ def cleanup(
                    channel="cleanup")
             continue
         deleted.append(raw_path)
+        exec_done += 1
         # §30：永久删除必须明确记录 rollback_unsupported
         _audit(org_cfg, action="DELETE_CLEANUP", source=raw_path, target="",
                result="SUCCESS", error="rollback_unsupported",
                operation_id=operation_id, size=st.st_size, mtime=st.st_mtime_ns,
                channel="cleanup")
 
+    if canceled:
+        report("delete", "已取消，保留已完成部分", done=exec_done, total=exec_total)
+        return mark_partial(result)
+    report("delete", "删除垃圾文件", done=exec_done, total=exec_total)
     return result
