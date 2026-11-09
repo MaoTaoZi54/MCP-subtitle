@@ -29,6 +29,7 @@ from .config import (
     DEFAULT_FAST_INDEXERS,
     DEFAULT_SUBTITLE_EXTENSIONS,
     DEFAULT_VIDEO_EXTENSIONS,
+    AssrtConfig,
     CleanupConfig,
     DysbkConfig,
     JackettConfig,
@@ -39,7 +40,7 @@ from .config import (
     OpensubtitlesConfig,
     OrganizerConfig,
     SeedhubConfig,
-    ShooterConfig,
+    SubdlConfig,
     SubhdConfig,
     SubtitlesConfig,
     TmdbConfig,
@@ -85,7 +86,8 @@ def schema_defaults() -> dict[str, Any]:
         # YAML 键是 subtitle（单数），dataclass 是 SubtitlesConfig
         "subtitle": _section(SubtitlesConfig),
         "opensubtitles": _section(OpensubtitlesConfig),
-        "shooter": _section(ShooterConfig),
+        "assrt": _section(AssrtConfig),
+        "subdl": _section(SubdlConfig),
         "subhd": _section(SubhdConfig),
         "tmdb": _section(TmdbConfig),
         # 插件形态的生效默认值是开启（容器形态仍为 False）；写显式 true

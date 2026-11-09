@@ -15,7 +15,7 @@ def read_manifest() -> configparser.ConfigParser:
 def test_manifest_fields():
     manifest = read_manifest()
     assert manifest["appname"] == "nas-media"
-    assert manifest["version"] == "0.19.29"
+    assert manifest["version"] == "0.19.31"
     assert "MCP" in manifest["changelog"]
     assert manifest["platform"] == "all"
     assert manifest["desktop_applaunchname"] == "nas-media.main"
@@ -25,7 +25,7 @@ def test_manifest_fields():
 
 def test_version_matches_pyproject():
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "0.19.29"' in text
+    assert 'version = "0.19.31"' in text
 
 
 def test_json_files_valid():

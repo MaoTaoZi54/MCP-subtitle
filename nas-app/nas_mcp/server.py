@@ -97,21 +97,40 @@ def _safe_tool(fn):
                 "工具 %s SubHD 错误 code=%s 状态=%s 耗时=%.3fs: %s",
                 name, exc.code, exc.status_code, time.monotonic() - started, exc,
             )
-            return {"ok": False, "error": {
+            payload = {
                 "code": exc.code,
                 "message": str(exc),
                 "status_code": exc.status_code,
-            }}
+            }
+            if exc.site:
+                payload["site"] = exc.site
+            if exc.endpoint:
+                payload["endpoint"] = exc.endpoint
+            if exc.retryable is not None:
+                payload["retryable"] = exc.retryable
+            if exc.detail:
+                payload["detail"] = exc.detail
+            return {"ok": False, "error": payload}
         except SubtitleError as exc:
             logger.warning(
                 "工具 %s 字幕编排错误 耗时=%.3fs: %s site_errors=%s",
                 name, time.monotonic() - started, exc, exc.site_errors,
             )
-            return {"ok": False, "error": {
-                "code": "subtitle_error",
+            # 兼容既有契约：普通失败仍是 subtitle_error；仅把可判定的
+            # Cloudflare 挑战类错误码暴露到顶层，便于调用方决策。
+            code = getattr(exc, "code", None) or "subtitle_error"
+            if code == "all_sites_failed":
+                code = "subtitle_error"
+            payload = {
+                "code": code,
                 "message": str(exc),
                 "site_errors": exc.site_errors,
-            }}
+            }
+            if getattr(exc, "site_error_details", None):
+                payload["site_error_details"] = exc.site_error_details
+            if getattr(exc, "retryable", None) is not None:
+                payload["retryable"] = exc.retryable
+            return {"ok": False, "error": payload}
         except JackettError as exc:
             logger.warning(
                 "工具 %s Jackett 错误 code=%s 状态=%s 耗时=%.3fs: %s",
@@ -220,9 +239,24 @@ def create_server(cfg: NasConfig) -> MCPServer:
                 "username_configured": bool(cfg.opensubtitles.username),
                 "language": cfg.opensubtitles.language,
             },
+            "assrt": {
+                "enabled": cfg.assrt.enabled,
+                "token_configured": bool(cfg.assrt.token),
+                "proxy_configured": bool(cfg.assrt.proxy),
+                # 显式暴露传输模式：insecure_no_sni_direct 为不安全降级连接
+                "transport": (
+                    "insecure_no_sni_direct" if cfg.assrt.insecure_no_sni_direct
+                    else ("proxy" if cfg.assrt.proxy else "direct")
+                ),
+            },
+            "subdl": {
+                "enabled": cfg.subdl.enabled,
+                "api_key_configured": bool(cfg.subdl.api_key),
+            },
+            # 旧客户端兼容：assrt 的历史字段名是 shooter
             "shooter": {
-                "enabled": cfg.shooter.enabled,
-                "token_configured": bool(cfg.shooter.token),
+                "enabled": cfg.assrt.enabled,
+                "token_configured": bool(cfg.assrt.token),
             },
             "subtitles": asdict(cfg.subtitles),
             # §42：API Key 绝不返回/入日志，只暴露是否已配置
@@ -617,12 +651,12 @@ def create_server(cfg: NasConfig) -> MCPServer:
     def subtitle_search(video_path: str = "", keyword: str = "") -> dict:
         """在多站点搜索字幕候选（只读网络搜索，不落盘）。
 
-        支持 SubHD、OpenSubtitles、射手网（伪）三个站点，按 subtitle.site_order
+        支持 SubHD、OpenSubtitles、assrt、SubDL 四个站点，按 subtitle.site_order
         顺序串行搜索，站点报错/0 结果/最高分低于阈值时自动切换下一站。
         某站最高分达到 switch_min_score（默认 0.9）即提前停止。
         各站候选汇总后统一评分排序，sid 带站点前缀（如 subhd:OyVNRJ）。
 
-        站点启停：subhd.enabled / opensubtitles.enabled / shooter.enabled
+        站点启停：subhd.enabled / opensubtitles.enabled / assrt.enabled / subdl.enabled
         各自独立控制；site_order 中 enabled=false 的站点自动跳过。
         提供 video_path 时从文件名解析搜索词；也可用 keyword 自由搜索。
 
@@ -645,9 +679,9 @@ def create_server(cfg: NasConfig) -> MCPServer:
     ) -> dict:
         """从多站点下载字幕并保存到视频同目录（写操作）。
 
-        sid 带站点前缀路由（subhd:XXX / opensubtitles:XXX / shooter:XXX），
+        sid 带站点前缀路由（subhd:XXX / opensubtitles:XXX / assrt:XXX / subdl:...），
         无前缀默认走 subhd。该站下载失败时自动按 site_order 换站重搜重下，
-        三站都失败才报错（错误信息汇总每站失败原因）。
+        全部启用站点都失败才报错（错误信息汇总每站失败原因）。
 
         双重门控：至少一个站点 enabled 且 enable_write=true。
         保存位置固定为视频所在目录，文件名按 subhd.filename_template 生成。

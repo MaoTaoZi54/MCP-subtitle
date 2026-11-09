@@ -29,11 +29,12 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
-from http.cookiejar import CookieJar
+from http.cookiejar import Cookie, CookieJar
 from pathlib import Path
 from typing import Any
 from zipfile import ZipFile
 
+from . import subhd_clearance as clearance_mod
 from .config import SubhdConfig, TmdbConfig
 from .fs_utils import write_bytes as safe_write_bytes
 from .platform_hints import permission_hint_text
@@ -499,12 +500,62 @@ def _subhd_retryable(exc: "SubhdError") -> bool:
     return exc.status_code is None or exc.status_code >= 500
 
 
+# Cloudflare 挑战页的特征标记：命中且会话无 cf_clearance 时直接判挑战，
+# 不再针对 5xx 做连接重建重试（挑战不会因为重试而消失）。
+_CHALLENGE_MARKERS = ("challenge-platform", "cf-chl-", "_cf_chl_opt")
+
+
+def _body_has_challenge(body: bytes | str | None) -> bool:
+    if not body:
+        return False
+    if isinstance(body, bytes):
+        text = body[:20000].decode("utf-8", errors="replace")
+    else:
+        text = str(body)[:20000]
+    return any(marker in text for marker in _CHALLENGE_MARKERS)
+
+
+# 站点自身的下载频率限制（与 Cloudflare 无关）：403 + 该文案时不要续签浏览器，
+# 那既不会让限流消失，还会浪费一次挑战。
+_RATE_LIMIT_MARKERS = ("下载频率过高", "频率过高", "请求过于频繁", "too many requests")
+
+
+def _body_has_rate_limit(body: bytes | str | None) -> bool:
+    if not body:
+        return False
+    if isinstance(body, bytes):
+        text = body[:2000].decode("utf-8", errors="replace")
+    else:
+        text = str(body)[:2000]
+    text = text.lower()
+    return any(marker.lower() in text for marker in _RATE_LIMIT_MARKERS)
+
+
+def _rate_limit_error(endpoint: str, body: bytes | str | None = None) -> "SubhdError":
+    return SubhdError(
+        f"SubHD {endpoint} 被站点限流（HTTP 403）：下载频率过高，请稍后重试",
+        status_code=403,
+        body=body,
+        code="subhd_rate_limited",
+        site="subhd",
+        endpoint=endpoint,
+        retryable=True,
+        detail="rate_limited",
+    )
+
+
 class SubhdClient:
     """SubHD HTTP 客户端：持久 Session（Cookie + 连接复用）+ Chrome UA + 限速。"""
 
     def __init__(self, cfg: SubhdConfig):
         self.cfg = cfg
         self._last_request_at = 0.0
+        # Cloudflare 挑战凭据：浏览器续签成功后注入 Session，后续请求复用；
+        # 单次客户端实例最多续签一次（_renewed），避免 403 时无限重试。
+        self._clearance: clearance_mod.Clearance | None = None
+        self._renewed = False
+        self._clearance_error: clearance_mod.ClearanceError | None = None
+        self._user_agent = cfg.user_agent
         if _cf_requests is not None:
             self._session = self._new_session()
             self._jar = None
@@ -526,7 +577,7 @@ class SubhdClient:
         except Exception:  # pragma: no cover - 老版本 curl_cffi 无该指纹
             logger.warning("curl_cffi 不支持 impersonate=%s，回退默认指纹", _SUBDH_IMPERSONATE)
             session = _cf_requests.Session()
-        session.headers.update({"User-Agent": self.cfg.user_agent})
+        session.headers.update({"User-Agent": self._user_agent})
         return session
 
     def _reset_session(self) -> None:
@@ -542,6 +593,8 @@ class SubhdClient:
         except Exception:  # pragma: no cover - 关闭失败不影响后续重建
             pass
         self._session = self._new_session()
+        if self._clearance is not None:
+            self._apply_clearance(self._clearance)
 
     def _rate_limit(self) -> None:
         elapsed = time.monotonic() - self._last_request_at
@@ -549,6 +602,213 @@ class SubhdClient:
         if wait > 0:
             time.sleep(wait)
         self._last_request_at = time.monotonic()
+
+    # ---- Cloudflare 人机挑战（cf_clearance） ----
+
+    def _warmup_url(self, sid: str) -> str:
+        """首次挑战用详情页：与后续 prepare-download 的 Referer 同源。"""
+        return f"{self.cfg.base_url}/a/{sid}"
+
+    def _apply_clearance(self, clearance: clearance_mod.Clearance) -> None:
+        """把浏览器 UA 与 CF cookie 注入当前 Session（curl_cffi / urllib 两条路径）。"""
+        self._clearance = clearance
+        self._user_agent = clearance.user_agent or self.cfg.user_agent
+        if self._session is not None:
+            try:
+                self._session.headers["User-Agent"] = self._user_agent
+            except Exception:  # pragma: no cover - 老版本 curl_cffi 头部接口差异
+                pass
+            for name, value, domain, path, _expires in clearance.cookies:
+                try:
+                    self._session.cookies.set(name, value, domain=domain, path=path or "/")
+                except Exception:  # pragma: no cover - cookie jar 拒绝异常域
+                    logger.warning("SubHD cf_clearance cookie 注入失败: %s", name)
+            return
+
+        # urllib 兼容路径：直接写入 CookieJar
+        if self._jar is None:  # pragma: no cover - 理论不可达
+            return
+        for name, value, domain, path, expires in clearance.cookies:
+            try:
+                self._jar.set_cookie(Cookie(
+                    version=0,
+                    name=name,
+                    value=value,
+                    port=None,
+                    port_specified=False,
+                    domain=domain,
+                    domain_specified=bool(domain),
+                    domain_initial_dot=str(domain).startswith("."),
+                    path=path or "/",
+                    path_specified=True,
+                    secure=True,
+                    expires=int(expires) if expires else None,
+                    discard=not expires,
+                    comment=None,
+                    comment_url=None,
+                    rest={"HttpOnly": None},
+                    rfc2109=False,
+                ))
+            except Exception:  # pragma: no cover - 兼容路径的容错
+                logger.warning("SubHD cf_clearance cookie 注入失败: %s", name)
+
+    def _ensure_clearance(self, sid: str) -> None:
+        """首次请求前准备凭据：优先复用落盘，缺失/过期才启动浏览器。
+
+        失败不在这里抛出：先按无凭据请求，若站点返回 403 再由
+        ``_challenge_error`` 映射成可判断的错误码（browser_unavailable /
+        cloudflare_challenge / clearance_expired）。
+        """
+        if self._clearance is not None:
+            return
+        try:
+            stored = clearance_mod.load(self.cfg)
+        except Exception as exc:  # pragma: no cover - 读盘异常不应阻断请求
+            logger.warning("SubHD cf_clearance 读取异常: %s", exc)
+            stored = None
+        if stored is not None and stored.is_valid():
+            self._apply_clearance(stored)
+            logger.info(
+                "SubHD 复用已落盘的 cf_clearance（到期 %s）",
+                time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stored.expires_at)),
+            )
+            return
+
+        if not self.cfg.browser_renew_enabled:
+            logger.info("SubHD 浏览器续签已关闭（subhd.browser_renew_enabled=false）")
+            return
+        if not clearance_mod.playwright_available():
+            self._clearance_error = clearance_mod.ClearanceError(
+                "未安装 playwright，无法自动通过 Cloudflare 挑战"
+                "（pip install playwright 后再执行 playwright install chromium）",
+                code="browser_unavailable",
+                retryable=False,
+            )
+            logger.warning("SubHD 无法自动续签 cf_clearance：%s", self._clearance_error)
+            return
+        try:
+            clearance = clearance_mod.acquire(self.cfg, self._warmup_url(sid))
+        except clearance_mod.ClearanceError as exc:
+            self._clearance_error = exc
+            logger.warning("SubHD cf_clearance 获取失败（%s）：%s", exc.code, exc)
+            return
+        self._apply_clearance(clearance)
+
+    def _can_renew(self) -> bool:
+        return (
+            self.cfg.browser_renew_enabled
+            and clearance_mod.playwright_available()
+        )
+
+    def _renew_clearance(self, sid: str, endpoint: str = "prepare-download") -> None:
+        """403 后强制续签一次；失败转结构化 SubhdError。"""
+        self._renewed = True
+        self._clearance = None
+        self._user_agent = self.cfg.user_agent
+        if self._session is not None:
+            self._reset_session()
+        try:
+            clearance = clearance_mod.acquire(
+                self.cfg, self._warmup_url(sid), force=True
+            )
+        except clearance_mod.ClearanceError as exc:
+            clearance_mod.invalidate(self.cfg)
+            raise SubhdError(
+                f"Cloudflare 人机挑战未通过（{exc.code}）：{exc}",
+                status_code=403,
+                code=exc.code,
+                site="subhd",
+                endpoint=endpoint,
+                retryable=exc.retryable,
+                detail=exc.detail,
+            ) from exc
+        self._apply_clearance(clearance)
+
+    def _challenge_error(self, original: "SubhdError", endpoint: str) -> "SubhdError":
+        """把 403/挑战页映射为可判断的挑战错误（不泄露 cookie 值）。"""
+        status = original.status_code or 403
+        if self._clearance is None and self._clearance_error is not None:
+            cause = self._clearance_error
+            code = cause.code
+            retryable = cause.retryable
+            detail = cause.detail
+            message = (
+                f"SubHD {endpoint} 被 Cloudflare 挑战拦截（HTTP {status}），"
+                f"且无法自动续签：{cause}"
+            )
+        elif self._renewed:
+            code = "clearance_expired"
+            retryable = True
+            detail = "renewed_once"
+            message = (
+                f"SubHD {endpoint} 在重新签发 cf_clearance 后仍返回 {status}"
+                "（站点挑战策略可能已升级，例如交互式 Turnstile）"
+            )
+        elif not self.cfg.browser_renew_enabled:
+            code = "cloudflare_challenge"
+            retryable = True
+            detail = "browser_renew_disabled"
+            message = (
+                f"SubHD {endpoint} 被 Cloudflare 挑战拦截（HTTP {status}）；"
+                "浏览器续签已关闭（subhd.browser_renew_enabled=false）"
+            )
+        else:
+            code = "cloudflare_challenge"
+            retryable = True
+            detail = "clearance_missing"
+            message = f"SubHD {endpoint} 被 Cloudflare 挑战拦截（HTTP {status}）"
+        return SubhdError(
+            message,
+            status_code=status,
+            body=original.body,
+            code=code,
+            site="subhd",
+            endpoint=endpoint,
+            retryable=retryable,
+            detail=detail,
+        )
+
+    def _request_with_clearance(
+        self,
+        url: str,
+        *,
+        endpoint: str,
+        sid: str,
+        method: str = "GET",
+        data: bytes | None = None,
+        referer: str | None = None,
+        parse_json: bool = False,
+    ) -> str | dict | bytes:
+        """带 CF 凭据的请求：403 时续签一次并重试，仍失败则给明确错误码。"""
+        try:
+            return self._request(
+                url, method=method, data=data, referer=referer, parse_json=parse_json
+            )
+        except SubhdError as exc:
+            if exc.status_code == 403 and _body_has_rate_limit(exc.body):
+                # 站点自身的下载频控：与 CF 无关，续签浏览器无意义。
+                raise _rate_limit_error(endpoint, exc.body) from exc
+            if exc.status_code != 403:
+                # 非 403 但响应体是 CF 挑战页（如 503）：会话无有效凭据时直接
+                # 判挑战错误，避免 _request 对 5xx 做无谓的连接重建重试。
+                if self._clearance is None and _body_has_challenge(exc.body):
+                    raise self._challenge_error(exc, endpoint) from exc
+                raise
+            if not self._renewed and self._can_renew():
+                logger.warning(
+                    "SubHD %s 返回 403，清除旧凭据并重新签发 cf_clearance 后重试一次",
+                    endpoint,
+                )
+                self._renew_clearance(sid, endpoint)
+                try:
+                    return self._request(
+                        url, method=method, data=data, referer=referer, parse_json=parse_json
+                    )
+                except SubhdError as retry_exc:
+                    if retry_exc.status_code == 403:
+                        raise self._challenge_error(retry_exc, endpoint) from retry_exc
+                    raise
+            raise self._challenge_error(exc, endpoint) from exc
 
     def _request(
         self,
@@ -653,7 +913,7 @@ class SubhdClient:
         referer: str | None,
     ) -> tuple[bytes, str]:
         """无 curl_cffi 时的兼容路径（每个请求新建连接）。"""
-        headers = {"User-Agent": self.cfg.user_agent}
+        headers = {"User-Agent": self._user_agent}
         if referer:
             headers["Referer"] = referer
         if data is not None:
@@ -706,11 +966,18 @@ class SubhdClient:
         }
 
     def prepare_download(self, sid: str) -> str:
-        """步骤 3：POST /api/sub/prepare-download，返回 /down/{sid} 中转路径。"""
+        """步骤 3：POST /api/sub/prepare-download，返回 /down/{sid} 中转路径。
+
+        该端点受 Cloudflare JS 挑战保护：先确保会话带 cf_clearance，
+        403 时只续签一次再试。挑战特征明显时不做无谓网络重试。
+        """
+        self._ensure_clearance(sid)
         url = f"{self.cfg.base_url}/api/sub/prepare-download"
         data = json.dumps({"sid": sid}).encode("utf-8")
-        resp = self._request(
+        resp = self._request_with_clearance(
             url,
+            endpoint="api/sub/prepare-download",
+            sid=sid,
             method="POST",
             data=data,
             referer=f"{self.cfg.base_url}/a/{sid}",
@@ -719,7 +986,10 @@ class SubhdClient:
         if not isinstance(resp, dict):
             raise SubhdError("prepare-download 返回非 JSON")
         if not resp.get("success"):
-            raise SubhdError(f"prepare-download 失败: {resp.get('msg', '未知错误')}")
+            msg = str(resp.get("msg", "未知错误"))
+            if _body_has_rate_limit(msg):
+                raise _rate_limit_error("api/sub/prepare-download")
+            raise SubhdError(f"prepare-download 失败: {msg}")
         download_path = resp.get("url", "")
         if not download_path.startswith("/down/"):
             raise SubhdError(f"prepare-download 返回非法下载路径: {download_path!r}")
@@ -729,17 +999,26 @@ class SubhdClient:
         """步骤 4-5：访问中转页 → POST /api/sub/down，返回直链 URL。
 
         中转页必须带同一个 CookieJar + Referer，否则 403「下载页面已失效」。
+        这两步同样受 cf_clearance 保护，403 时续签一次。
         """
+        self._ensure_clearance(sid)
         # 步骤 4：GET /down/{sid}（中转页，内嵌 JS 指向验证接口）
         down_url = f"{self.cfg.base_url}{download_path}"
         referer = f"{self.cfg.base_url}/a/{sid}"
-        self._request(down_url, referer=referer)  # 保持会话
+        self._request_with_clearance(
+            down_url,
+            endpoint=f"down/{sid}",
+            sid=sid,
+            referer=referer,
+        )  # 保持会话
 
         # 步骤 5：POST /api/sub/down
         api_url = f"{self.cfg.base_url}/api/sub/down"
         data = json.dumps({"sid": sid}).encode("utf-8")
-        resp = self._request(
+        resp = self._request_with_clearance(
             api_url,
+            endpoint="api/sub/down",
+            sid=sid,
             method="POST",
             data=data,
             referer=down_url,
@@ -748,7 +1027,10 @@ class SubhdClient:
         if not isinstance(resp, dict):
             raise SubhdError("down 验证返回非 JSON")
         if not resp.get("pass"):
-            raise SubhdError(f"down 验证失败: {resp.get('msg', '未知错误')}")
+            msg = str(resp.get("msg", "未知错误"))
+            if _body_has_rate_limit(msg):
+                raise _rate_limit_error("api/sub/down")
+            raise SubhdError(f"down 验证失败: {msg}")
         direct_url = resp.get("url", "")
         if not direct_url.startswith(("http://", "https://")):
             raise SubhdError(f"down 验证返回非法直链: {direct_url!r}")
@@ -838,7 +1120,7 @@ class SubhdClient:
                 pass
 
     def _download_once_urllib(self, direct_url: str, referer: str) -> tuple[bytes, dict]:
-        headers = {"User-Agent": self.cfg.user_agent, "Referer": referer}
+        headers = {"User-Agent": self._user_agent, "Referer": referer}
         req = urllib.request.Request(direct_url, headers=headers)
         try:
             with self._opener.open(req, timeout=self.cfg.timeout_seconds) as resp:
@@ -885,10 +1167,20 @@ class SubhdError(Exception):
         status_code: int | None = None,
         body: bytes = b"",
         code: str = "subhd_error",
+        site: str = "subhd",
+        endpoint: str = "",
+        retryable: bool | None = None,
+        detail: str = "",
     ):
         self.status_code = status_code
         self.body = body
         self.code = code
+        # 结构化错误元信息：让上层（编排层/Agent）能判断是哪个站点、哪个端点、
+        # 是否值得重试，而不是只能解析笼统 message。
+        self.site = site
+        self.endpoint = endpoint
+        self.retryable = retryable
+        self.detail = detail
         super().__init__(message)
 
 

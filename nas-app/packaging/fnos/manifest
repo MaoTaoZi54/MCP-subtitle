@@ -1,5 +1,5 @@
 appname=nas-media
-version=0.19.29
+version=0.19.31
 display_name=NAS 媒体工具箱
 desc=影视媒体智能分析与资源搜索：媒体扫描（HDR/杜比视界/音轨/字幕）、国产判定、TMDB 片名解析、多站点字幕搜索与批量补全、外挂字幕无损混流、媒体库体检/查重/缺集/完整性检查、Jackett/SeedHub/网盘资源聚合搜索、媒体目录整理与可回滚清理。路径白名单 + 排除目录强制安全边界，写操作默认关闭。
 source=thirdparty

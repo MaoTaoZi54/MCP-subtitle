@@ -1,4 +1,4 @@
-"""多站点字幕搜索与下载编排（subhd / opensubtitles / shooter）。
+"""多站点字幕搜索与下载编排（subhd / opensubtitles / assrt / subdl）。
 
 协调三个字幕站点进行搜索和下载，支持自动 failover：
 - 搜索：按 site_order 依次搜索各站点，候选合并去重（sid 带站点前缀，天然无冲突），
@@ -22,23 +22,21 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+from . import assrt as assrt_mod
 from . import media as media_tools
 from . import opensubtitles as opensubtitles_mod
-from . import shooter as shooter_mod
+from . import subdl as subdl_mod
 from . import subhd as subhd_tools
 from .fs_utils import write_bytes as safe_write_bytes
 from .platform_hints import permission_hint_text
 from .config import (
     NasConfig,
     OpensubtitlesConfig,
-    ShooterConfig,
     SubhdConfig,
     TmdbConfig,
 )
-from .opensubtitles import OpensubtitlesError
 from .progress import check_canceled, mark_partial, report as report_progress
 from .security import InvalidArguments, PathGuard
-from .shooter import ShooterError
 from .subhd import (
     SubtitleCandidate,
     SubhdClient,
@@ -69,11 +67,63 @@ logger = logging.getLogger("nas_mcp.subtitle")
 
 
 class SubtitleError(Exception):
-    """多站点字幕编排失败。"""
+    """多站点字幕编排失败。
 
-    def __init__(self, message, *, site_errors=None):
+    ``code`` 默认 all_sites_failed；当主站点失败原因可判定（例如 SubHD 的
+    Cloudflare 挑战）时提升为对应错误码，便于 Agent 决策。
+    """
+
+    def __init__(
+        self,
+        message,
+        *,
+        site_errors=None,
+        site_error_details=None,
+        code="all_sites_failed",
+        retryable=None,
+    ):
         self.site_errors = site_errors or {}
+        self.site_error_details = site_error_details or {}
+        self.code = code
+        self.retryable = retryable
         super().__init__(message)
+
+
+# 需要从各站点错误里提升到编排层顶部的可判定错误码（顺序即优先级）。
+_ESCALATE_ERROR_CODES = (
+    "cloudflare_challenge",
+    "browser_unavailable",
+    "clearance_expired",
+    "subhd_rate_limited",
+    "missing_credentials",
+    "dependency_missing",
+    "auth_failed",
+    "rate_limited",
+)
+
+# 用户可开启的全部站点（用于错误提示；顺序与默认 site_order 一致）
+_ALL_SITES_HINT = "subhd/opensubtitles/assrt/subdl"
+
+
+def _describe_site_error(exc: Exception) -> dict | None:
+    """把站点异常整理成结构化详情（不含敏感信息）。
+
+    仅返回自有错误码的异常；普通异常只保留 message，避免把第三方对象的
+    repr 混进响应。
+    """
+    code = getattr(exc, "code", None)
+    if not code:
+        return None
+    detail = {
+        "code": str(code),
+        "message": str(exc),
+        "site": getattr(exc, "site", None),
+        "endpoint": getattr(exc, "endpoint", None) or None,
+        "retryable": getattr(exc, "retryable", None),
+        "status_code": getattr(exc, "status_code", None),
+        "detail": getattr(exc, "detail", None) or None,
+    }
+    return {key: value for key, value in detail.items() if value is not None}
 
 
 # ---------------------------------------------------------------- 站点适配
@@ -85,8 +135,10 @@ def _site_enabled(cfg: NasConfig, site: str) -> bool:
         return cfg.subhd.enabled
     if site == "opensubtitles":
         return cfg.opensubtitles.enabled
-    if site == "shooter":
-        return cfg.shooter.enabled
+    if site == "assrt":
+        return cfg.assrt.enabled
+    if site == "subdl":
+        return cfg.subdl.enabled
     return False
 
 
@@ -100,7 +152,8 @@ def _subhd_search(
 ) -> list[SubtitleCandidate]:
     """适配 SubHD 搜索：复用 subhd_tools.search_subtitles 的多轮召回（含 TMDB 别名）。
 
-    返回的 SubtitleCandidate.sid 统一带 subhd: 前缀，避免与 opensubtitles:/shooter: 冲突。
+    返回的 SubtitleCandidate.sid 统一带 subhd: 前缀，避免与
+    opensubtitles:/assrt:/subdl: 冲突。
     score 置 0.0——由编排层统一评分，保证各站点评分基准一致。
     """
     result = subhd_tools.search_subtitles(
@@ -165,9 +218,11 @@ def _site_search(
         )
     if site == "opensubtitles":
         return opensubtitles_mod.search(cfg.opensubtitles, keyword, query)
-    if site == "shooter":
-        # 不传 query——编排层统一评分，避免站点内部排序与编排层不一致
-        return shooter_mod.search(cfg.shooter, keyword)
+    if site == "assrt":
+        # 统一最小协议 search(query)；评分由编排层统一做，避免站内排序不一致
+        return assrt_mod.search(cfg.assrt, query)
+    if site == "subdl":
+        return subdl_mod.search(cfg.subdl, query)
     raise ValueError(f"未知站点: {site}")
 
 
@@ -177,8 +232,10 @@ def _site_fetch(site: str, cfg: NasConfig, sid: str) -> tuple[str, bytes]:
         return _subhd_fetch(cfg.subhd, sid)
     if site == "opensubtitles":
         return opensubtitles_mod.fetch(cfg.opensubtitles, sid)
-    if site == "shooter":
-        return shooter_mod.fetch(cfg.shooter, sid)
+    if site == "assrt":
+        return assrt_mod.fetch(cfg.assrt, sid)
+    if site == "subdl":
+        return subdl_mod.fetch(cfg.subdl, sid)
     raise ValueError(f"未知站点: {site}")
 
 
@@ -227,13 +284,14 @@ def search_subtitles(
     if not enabled_sites:
         raise InvalidArguments(
             "所有字幕站点均未启用"
-            "（请在配置中开启至少一个：subhd/opensubtitles/shooter）"
+            f"（请在配置中开启至少一个：{_ALL_SITES_HINT}）"
         )
 
     # 4. 逐站点搜索 + failover
     by_sid: dict[str, SubtitleCandidate] = {}
     tried_sites: list[str] = []
     site_errors: dict[str, str] = {}
+    site_error_details: dict[str, dict] = {}
     # #6：逐站状态明细，让调用方区分"该站确实无数据"与"该站失败了"
     site_attempts: list[dict] = []
 
@@ -291,10 +349,22 @@ def search_subtitles(
                 break
         except Exception as exc:
             site_errors[site] = str(exc)
+            described = _describe_site_error(exc)
+            if described:
+                site_error_details[site] = described
             site_attempts.append({
-                "site": site, "status": "error", "count": 0, "error": str(exc),
+                "site": site,
+                "status": "error",
+                "count": 0,
+                "code": getattr(exc, "code", "error"),
+                "retryable": getattr(exc, "retryable", None),
+                "error": str(exc),
             })
-            logger.warning("站点 %s 搜索失败: %s", site, exc)
+            # 日志只记异常类型与错误码：不输出凭据、URL 查询串或响应原文
+            logger.warning(
+                "站点 %s 搜索失败（%s: %s）",
+                site, getattr(exc, "code", "error"), type(exc).__name__,
+            )
             continue
 
     # 5. 评分排序
@@ -349,18 +419,36 @@ def search_subtitles(
         ],
         "tried_sites": tried_sites,
         "site_errors": site_errors,
+        "site_error_details": site_error_details,
+        # assrt 的传输模式（proxy/direct/insecure_no_sni_direct）显式暴露，
+        # 让调用方一眼看出是否启用了降级（不安全）直连
+        "site_transports": _site_transports(cfg),
     }
 
 
 # ---------------------------------------------------------------- 下载编排
 
 
+def _site_transports(cfg: NasConfig) -> dict[str, dict]:
+    """返回需要标识传输模式的站点信息（目前仅 assrt 支持降级直连）。"""
+    transports: dict[str, dict] = {}
+    if cfg.assrt.enabled:
+        transports["assrt"] = assrt_mod.transport_info(cfg.assrt)
+    return transports
+
+
 def _parse_sid_site(sid: str) -> str:
-    """从 sid 前缀解析站点名（subhd:XXX 或无前缀 → subhd）。"""
-    if sid.startswith("opensubtitles:"):
+    """从 sid 前缀解析站点名（无前缀 → subhd）。
+
+    assrt:/subdl: 为正式前缀；shooter: 作为 assrt 的历史前缀继续兼容。
+    """
+    lowered = sid.lower()
+    if lowered.startswith("opensubtitles:"):
         return "opensubtitles"
-    if sid.startswith("shooter:"):
-        return "shooter"
+    if lowered.startswith(("assrt:", "shooter:")):
+        return "assrt"
+    if lowered.startswith("subdl:"):
+        return "subdl"
     # subhd:XXX 或无前缀 → subhd
     return "subhd"
 
@@ -391,7 +479,10 @@ def _search_best_sid_for_failover(
             query=query, release_hint=release_hint, tmdb_cfg=tmdb_cfg,
         )
     except Exception as exc:
-        logger.warning("failover 搜索站点 %s 失败: %s", site, exc)
+        logger.warning(
+            "failover 搜索站点 %s 失败（%s: %s）",
+            site, getattr(exc, "code", "error"), type(exc).__name__,
+        )
         return None
     if not candidates:
         return None
@@ -426,7 +517,7 @@ def download_subtitle(
     if not enabled_sites:
         raise InvalidArguments(
             "所有字幕站点均未启用"
-            "（请在配置中开启至少一个：subhd/opensubtitles/shooter）"
+            f"（请在配置中开启至少一个：{_ALL_SITES_HINT}）"
         )
     if not enable_write:
         raise InvalidArguments("写操作未启用（enable_write=false）")
@@ -470,6 +561,7 @@ def download_subtitle(
     tmdb_cfg = cfg.tmdb
 
     site_errors: dict[str, str] = {}
+    site_error_details: dict[str, dict] = {}
 
     # 6. 逐站点下载 + failover
     for site in site_order:
@@ -562,6 +654,9 @@ def download_subtitle(
                     f"{actual_language}，与请求 {lang} 不一致"
                     f"（落盘文件名仍按请求语言生成，请核对内容）"
                 )
+            # 降级连接可见性：assrt 走 no-SNI 直连时，下载结果里明确标注
+            if site == "assrt":
+                result["site_transport"] = assrt_mod.transport_info(cfg.assrt)
             return result
         except FileExistsError:
             # NEW-B：本地目标已存在属于存在性冲突，直接抛出由上层返回 target_exists，
@@ -569,13 +664,33 @@ def download_subtitle(
             raise
         except Exception as exc:
             site_errors[site] = str(exc)
-            logger.warning("站点 %s 下载失败: %s", site, exc)
+            described = _describe_site_error(exc)
+            if described:
+                site_error_details[site] = described
+            # 日志只记异常类型与错误码：不输出凭据、URL 查询串或响应原文
+            logger.warning(
+                "站点 %s 下载失败（%s: %s）",
+                site, getattr(exc, "code", "error"), type(exc).__name__,
+            )
             continue
 
-    # 7. 所有站点均失败
+    # 7. 所有站点均失败：主站点的可判定错误（如 CF 挑战）提升到顶层 code，
+    # 便于 Agent 直接判断是装依赖、换出口还是等 cookie 续签，而不是只看
+    # 笼统的 all_sites_failed。
+    code = "all_sites_failed"
+    retryable = None
+    for site in site_order:
+        detail = site_error_details.get(site)
+        if detail and detail.get("code") in _ESCALATE_ERROR_CODES:
+            code = detail["code"]
+            retryable = detail.get("retryable")
+            break
     raise SubtitleError(
         f"所有站点字幕下载均失败（已尝试: {', '.join(site_order)}）",
         site_errors=site_errors,
+        site_error_details=site_error_details,
+        code=code,
+        retryable=retryable,
     )
 
 
@@ -1007,6 +1122,10 @@ def _fill_individual(
                     "reason": f"download_failed: {exc}"}
             if isinstance(exc, SubtitleError):
                 item["site_errors"] = exc.site_errors
+                if getattr(exc, "site_error_details", None):
+                    item["site_error_details"] = exc.site_error_details
+                if getattr(exc, "code", ""):
+                    item["error_code"] = exc.code
             failed.append(item)
             continue
         item = {
@@ -1023,6 +1142,8 @@ def _fill_individual(
         }
         if r.get("language_warning"):
             item["language_warning"] = r["language_warning"]
+        if r.get("site_transport"):
+            item["site_transport"] = r["site_transport"]
         filled.append(item)
     return filled, skipped, failed, attempts, probe_errors
 
@@ -1066,7 +1187,7 @@ def fill_missing_subtitles(
     if not enabled_sites:
         raise InvalidArguments(
             "所有字幕站点均未启用"
-            "（请在配置中开启至少一个：subhd/opensubtitles/shooter）"
+            f"（请在配置中开启至少一个：{_ALL_SITES_HINT}）"
         )
     if not dry_run and not enable_write:
         raise InvalidArguments(

@@ -1,6 +1,6 @@
 # MCP-subtitle · NAS 媒体工具箱
 
-**主力形态是 Octop 插件** [nas-octop-plugin](nas-octop-plugin)；[nas-app](nas-app) 与 [nas-mcp](nas-mcp) 作为备选保留。三种交付形态共享同一份媒体能力内核 **0.19.29**（扫描/字幕/资源搜索/整理），装配层能力分工如下：
+**主力形态是 Octop 插件** [nas-octop-plugin](nas-octop-plugin)；[nas-app](nas-app) 与 [nas-mcp](nas-mcp) 作为备选保留。三种交付形态共享同一份媒体能力内核 **0.19.31**（扫描/字幕/资源搜索/整理），装配层能力分工如下：
 
 | 子项目 | 形态 | 说明 |
 | --- | --- | --- |

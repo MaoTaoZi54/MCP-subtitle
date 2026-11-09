@@ -428,9 +428,23 @@ class ToolRegistry:
                 "username_configured": bool(cfg.opensubtitles.username),
                 "password_configured": bool(cfg.opensubtitles.password),
             },
+            "assrt": {
+                "enabled": cfg.assrt.enabled,
+                "token_configured": bool(cfg.assrt.token),
+                "proxy_configured": bool(cfg.assrt.proxy),
+                "transport": (
+                    "insecure_no_sni_direct" if cfg.assrt.insecure_no_sni_direct
+                    else ("proxy" if cfg.assrt.proxy else "direct")
+                ),
+            },
+            "subdl": {
+                "enabled": cfg.subdl.enabled,
+                "api_key_configured": bool(cfg.subdl.api_key),
+            },
+            # 兼容旧前端：assrt 的历史字段名是 shooter
             "shooter": {
-                "enabled": cfg.shooter.enabled,
-                "token_configured": bool(cfg.shooter.token),
+                "enabled": cfg.assrt.enabled,
+                "token_configured": bool(cfg.assrt.token),
             },
             "seedhub": {"enabled": cfg.seedhub.enabled},
             "dysbk": {"enabled": cfg.dysbk.enabled},
@@ -456,7 +470,9 @@ class ToolRegistry:
             "jackett",
             "subhd",
             "opensubtitles",
-            "shooter",
+            "assrt",
+            "subdl",
+            "shooter",  # 旧前端兼容，写入时映射到 assrt
             "seedhub",
             "dysbk",
             "cleanup",
@@ -506,7 +522,12 @@ class ToolRegistry:
                 data, updates, "opensubtitles",
                 ("enabled", "username"), ("api_key", "password"),
             )
-            self._merge_section(data, updates, "shooter", ("enabled",), ("token",))
+            # 旧前端仍提交 shooter；映射到 assrt 段（历史叫法）
+            if "shooter" in updates and "assrt" not in updates:
+                updates = dict(updates)
+                updates["assrt"] = updates["shooter"]
+            self._merge_section(data, updates, "assrt", ("enabled",), ("token",))
+            self._merge_section(data, updates, "subdl", ("enabled",), ("api_key",))
             self._merge_section(data, updates, "seedhub", ("enabled",), ())
             self._merge_section(data, updates, "dysbk", ("enabled",), ())
 
@@ -655,9 +676,23 @@ class ToolRegistry:
                     "username_configured": bool(cfg.opensubtitles.username),
                     "language": cfg.opensubtitles.language,
                 },
+                "assrt": {
+                    "enabled": cfg.assrt.enabled,
+                    "token_configured": bool(cfg.assrt.token),
+                    "proxy_configured": bool(cfg.assrt.proxy),
+                    "transport": (
+                        "insecure_no_sni_direct" if cfg.assrt.insecure_no_sni_direct
+                        else ("proxy" if cfg.assrt.proxy else "direct")
+                    ),
+                },
+                "subdl": {
+                    "enabled": cfg.subdl.enabled,
+                    "api_key_configured": bool(cfg.subdl.api_key),
+                },
+                # 兼容旧前端字段
                 "shooter": {
-                    "enabled": cfg.shooter.enabled,
-                    "token_configured": bool(cfg.shooter.token),
+                    "enabled": cfg.assrt.enabled,
+                    "token_configured": bool(cfg.assrt.token),
                 },
                 "subtitles": _plain(cfg.subtitles),
                 "jackett": {

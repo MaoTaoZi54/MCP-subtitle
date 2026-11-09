@@ -34,6 +34,8 @@ KNOWN_TOP_LEVEL_KEYS = frozenset(
         "organizer",
         "subhd",
         "opensubtitles",
+        "assrt",
+        "subdl",
         "shooter",
         "subtitle",
         "jackett",
@@ -386,6 +388,18 @@ class SubhdConfig:
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     )
     filename_template: str = "{stem}.{lang}.{ext}"
+    # Cloudflare JS 挑战（cf_clearance）自动续签：subhd.tv 的下载 API 在
+    # 没有人机挑战凭据时恒返回 403。默认开启——装了 playwright 就走无头
+    # 浏览器，未装时降级为结构化错误 browser_unavailable，不影响其他站点。
+    browser_renew_enabled: bool = True
+    # 浏览器代理地址（如 http://user:pass@host:port）；留空直连。
+    browser_proxy: str = ""
+    browser_headless: bool = True
+    # 首次挑战/续签的总超时（秒）；含浏览器启动与页面等待。
+    browser_timeout_seconds: float = 45.0
+    # cf_clearance 落盘路径；留空为 <数据目录>/nas-media/subhd-clearance.json，
+    # 相对路径按该目录解析。
+    browser_cookie_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -408,25 +422,50 @@ class OpensubtitlesConfig:
 
 
 @dataclass(frozen=True)
-class ShooterConfig:
-    """射手网（伪，assrt.net）字幕搜索/下载配置。
+class AssrtConfig:
+    """伪射手（assrt.net）字幕搜索/下载配置。
 
-    API 仅需 token。
-    enabled=false 时搜索/下载工具直接跳过该站点。
+    API 仅需 token。enabled=false 时搜索/下载工具直接跳过该站点。
+    连接默认走 proxy；只有 insecure_no_sni_direct=true 才启用
+    「不发 SNI + 不校验证书」的直连降级（不安全，需用户显式开启）。
     """
     enabled: bool = False
     base_url: str = "https://api.assrt.net"
     token: str = ""
     token_env: str = "ASSRT_TOKEN"
+    proxy: str = ""
+    insecure_no_sni_direct: bool = False
     timeout_seconds: float = 30.0
     max_retries: int = 1
     min_request_interval_seconds: float = 1.0
 
 
 @dataclass(frozen=True)
+class SubdlConfig:
+    """SubDL（subdl.com）字幕搜索/下载配置。
+
+    免费 API key 提供 2,000 搜索 + 50 下载/天（UTC 0 点重置）。
+    enabled=false 时搜索/下载工具直接跳过该站点。
+    """
+    enabled: bool = False
+    base_url: str = "https://api.subdl.com"
+    download_base_url: str = "https://dl.subdl.com"
+    api_key: str = ""
+    api_key_env: str = "SUBDL_API_KEY"
+    language: str = "ZH"
+    timeout_seconds: float = 30.0
+    max_retries: int = 1
+    min_request_interval_seconds: float = 1.0
+
+
+# 旧配置段/站点名兼容：shooter 是 assrt 的历史叫法
+_LEGACY_SITE_ALIASES = {"shooter": "assrt"}
+
+
+@dataclass(frozen=True)
 class SubtitlesConfig:
     """多站点字幕编排配置（subtitle_search / subtitle_download）。"""
-    site_order: tuple[str, ...] = ("subhd", "opensubtitles", "shooter")
+    site_order: tuple[str, ...] = ("subhd", "opensubtitles", "assrt", "subdl")
     switch_min_score: float = 0.9
     # 批处理策略（media_fill_subtitles）：季内缺失数 ≥ max(本值, 50%×季总集数)
     # 才走整季包路径；缺 1 集恒单集（不变量），配额紧张时可调高。
@@ -554,7 +593,8 @@ class NasConfig:
     logging: LoggingConfig
     subhd: SubhdConfig
     opensubtitles: OpensubtitlesConfig
-    shooter: ShooterConfig
+    assrt: AssrtConfig
+    subdl: SubdlConfig
     subtitles: SubtitlesConfig
     jackett: JackettConfig
     tmdb: TmdbConfig
@@ -1077,41 +1117,101 @@ def _load_opensubtitles(data: dict[str, Any]) -> OpensubtitlesConfig:
     )
 
 
-def _load_shooter(data: dict[str, Any]) -> ShooterConfig:
-    raw = data.get("shooter") or {}
-    if not isinstance(raw, dict):
-        _fail("shooter", "shooter 必须是映射", expected="键值映射", actual=raw)
-    field = "shooter"
-    enabled = _strict_bool(raw.get("enabled"), False, f"{field}.enabled")
-    # token 解析：token_env 优先，然后 ${VAR} 字面量
-    token_env = str(raw.get("token_env", "ASSRT_TOKEN")).strip()
+def _resolve_token(
+    raw: dict[str, Any], field: str, default_env: str
+) -> tuple[str, str]:
+    """解析 token：token_env 优先，然后 ${VAR} 字面量。
+
+    与 ``_resolve_api_key`` 不同，这里即使 enabled=true 且 token 为空也不在
+    加载期报错——缺凭据由站点在运行时返回 ``missing_credentials``，
+    这样只影响该站点，不会让整份配置失效、拖垮其他字幕源。
+    """
+    token_env = str(raw.get("token_env", default_env)).strip()
     token = ""
     if token_env:
         token = os.environ.get(token_env, "").strip()
     if not token:
         literal = raw.get("token", "")
-        if isinstance(literal, str):
-            literal = literal.strip()
-            m = _ENV_PATTERN.match(literal)
-            if m:
-                token = os.environ.get(m.group(1), "").strip()
-                if not token_env:
-                    token_env = m.group(1)
-            else:
-                token = literal
-    if enabled and not token:
-        raise ConfigError(
-            f"{field}.enabled=true 但未配置 token"
-            f"（设置 token、token: ${{ASSRT_TOKEN}} 或环境变量 {token_env or 'ASSRT_TOKEN'}）"
-        )
-    base_url = str(raw.get("base_url", ShooterConfig.base_url)).strip().rstrip("/")
+        if not isinstance(literal, str):
+            _fail(
+                f"{field}.token",
+                f"{field}.token 必须是字符串",
+                expected="字符串（支持 ${VAR} 环境变量语法）",
+                actual=literal,
+            )
+        literal = literal.strip()
+        m = _ENV_PATTERN.match(literal)
+        if m:
+            token = os.environ.get(m.group(1), "").strip()
+            if not token_env:
+                token_env = m.group(1)
+        else:
+            token = literal
+    return token, token_env
+
+
+def _load_assrt(data: dict[str, Any]) -> AssrtConfig:
+    field = "assrt"
+    raw = data.get("assrt")
+    if raw is None:
+        # 兼容旧配置段名 shooter（assrt 的历史叫法）
+        raw = data.get("shooter")
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        _fail(field, f"{field} 必须是映射", expected="键值映射", actual=raw)
+    enabled = _strict_bool(raw.get("enabled"), False, f"{field}.enabled")
+    token, token_env = _resolve_token(raw, field, "ASSRT_TOKEN")
+    base_url = str(raw.get("base_url", AssrtConfig.base_url)).strip().rstrip("/")
     if not base_url.startswith(("http://", "https://")):
         raise ConfigError(f"{field}.base_url 必须是 http/https 地址，得到: {base_url!r}")
-    return ShooterConfig(
+    proxy = str(raw.get("proxy", "")).strip()
+    if proxy and not proxy.startswith(("http://", "https://")):
+        raise ConfigError(
+            f"{field}.proxy 必须是 http/https 代理地址（如 http://127.0.0.1:7890），"
+            f"得到: {proxy!r}"
+        )
+    return AssrtConfig(
         enabled=enabled,
         base_url=base_url,
         token=token,
         token_env=token_env,
+        proxy=proxy,
+        insecure_no_sni_direct=_strict_bool(
+            raw.get("insecure_no_sni_direct"), False,
+            f"{field}.insecure_no_sni_direct",
+        ),
+        timeout_seconds=_timeout_field(raw, 30.0, field),
+        max_retries=_nonneg_int(raw.get("max_retries"), 1, f"{field}.max_retries"),
+        min_request_interval_seconds=_load_interval(raw, field, 1.0),
+    )
+
+
+def _load_subdl(data: dict[str, Any]) -> SubdlConfig:
+    raw = data.get("subdl") or {}
+    if not isinstance(raw, dict):
+        _fail("subdl", "subdl 必须是映射", expected="键值映射", actual=raw)
+    field = "subdl"
+    enabled = _strict_bool(raw.get("enabled"), False, f"{field}.enabled")
+    # enabled 传 False：缺 key 不在加载期阻断，运行时由站点返回 missing_credentials
+    api_key, api_key_env = _resolve_api_key(raw, field, "SUBDL_API_KEY", False)
+    base_url = str(raw.get("base_url", SubdlConfig.base_url)).strip().rstrip("/")
+    if not base_url.startswith(("http://", "https://")):
+        raise ConfigError(f"{field}.base_url 必须是 http/https 地址，得到: {base_url!r}")
+    download_base_url = str(
+        raw.get("download_base_url", SubdlConfig.download_base_url)
+    ).strip().rstrip("/")
+    if not download_base_url.startswith(("http://", "https://")):
+        raise ConfigError(
+            f"{field}.download_base_url 必须是 http/https 地址，"
+            f"得到: {download_base_url!r}"
+        )
+    return SubdlConfig(
+        enabled=enabled,
+        base_url=base_url,
+        download_base_url=download_base_url,
+        api_key=api_key,
+        api_key_env=api_key_env,
+        language=str(raw.get("language", "ZH")).strip() or "ZH",
         timeout_seconds=_timeout_field(raw, 30.0, field),
         max_retries=_nonneg_int(raw.get("max_retries"), 1, f"{field}.max_retries"),
         min_request_interval_seconds=_load_interval(raw, field, 1.0),
@@ -1122,20 +1222,25 @@ def _load_subtitles(data: dict[str, Any]) -> SubtitlesConfig:
     raw = data.get("subtitle") or {}
     if not isinstance(raw, dict):
         _fail("subtitle", "subtitle 必须是映射", expected="键值映射", actual=raw)
-    valid_sites = {"subhd", "opensubtitles", "shooter"}
+    valid_sites = {"subhd", "opensubtitles", "assrt", "subdl"}
+    default_order = ("subhd", "opensubtitles", "assrt", "subdl")
     order_raw = raw.get("site_order")
     if order_raw is None:
-        site_order = ("subhd", "opensubtitles", "shooter")
+        site_order = default_order
     else:
         if not isinstance(order_raw, list) or not order_raw:
             raise ConfigError("subtitle.site_order 必须是非空列表")
-        site_order = tuple(str(s).strip() for s in order_raw)
-        for s in site_order:
+        normalized: list[str] = []
+        for item in order_raw:
+            s = _LEGACY_SITE_ALIASES.get(str(item).strip(), str(item).strip())
             if s not in valid_sites:
                 raise ConfigError(
-                    f"subtitle.site_order 中的 {s!r} 不是合法站点名"
+                    f"subtitle.site_order 中的 {item!r} 不是合法站点名"
                     f"（可选: {', '.join(sorted(valid_sites))}）"
                 )
+            if s not in normalized:  # 去重（shooter/assrt 同时出现时只保留一次）
+                normalized.append(s)
+        site_order = tuple(normalized)
     score_raw = raw.get("switch_min_score")
     if score_raw is None:
         switch_min_score = 0.9
@@ -1266,6 +1371,17 @@ def _load_subhd(data: dict[str, Any]) -> SubhdConfig:
         min_request_interval_seconds=_load_interval(subhd_raw, "subhd", 1.0),
         user_agent=str(subhd_raw.get("user_agent", SubhdConfig.user_agent)),
         filename_template=filename_template,
+        browser_renew_enabled=_strict_bool(
+            subhd_raw.get("browser_renew_enabled"), True, "subhd.browser_renew_enabled"
+        ),
+        browser_proxy=str(subhd_raw.get("browser_proxy", "") or "").strip(),
+        browser_headless=_strict_bool(
+            subhd_raw.get("browser_headless"), True, "subhd.browser_headless"
+        ),
+        browser_timeout_seconds=_positive_float(
+            subhd_raw.get("browser_timeout_seconds"), 45.0, "subhd.browser_timeout_seconds"
+        ),
+        browser_cookie_path=str(subhd_raw.get("browser_cookie_path", "") or "").strip(),
     )
 
 
@@ -1580,11 +1696,12 @@ def _load_all(data: dict[str, Any], file: Path) -> NasConfig:
     # ---- SubHD（M4：nas_search_subtitles / nas_download_subtitle） ----
     subhd_cfg = _try("subhd", lambda: _load_subhd(data), SubhdConfig())
 
-    # ---- OpenSubtitles / Shooter / 字幕编排 ----
+    # ---- OpenSubtitles / assrt / SubDL / 字幕编排 ----
     opensubtitles_cfg = _try(
         "opensubtitles", lambda: _load_opensubtitles(data), OpensubtitlesConfig()
     )
-    shooter_cfg = _try("shooter", lambda: _load_shooter(data), ShooterConfig())
+    assrt_cfg = _try("assrt", lambda: _load_assrt(data), AssrtConfig())
+    subdl_cfg = _try("subdl", lambda: _load_subdl(data), SubdlConfig())
     subtitles_cfg = _try("subtitle", lambda: _load_subtitles(data), SubtitlesConfig())
 
     # ---- Jackett 资源搜索（P4：jackett_search）与 TMDB 影视识别（P3：resolve_media） ----
@@ -1616,7 +1733,8 @@ def _load_all(data: dict[str, Any], file: Path) -> NasConfig:
         logging=logging_cfg,
         subhd=subhd_cfg,
         opensubtitles=opensubtitles_cfg,
-        shooter=shooter_cfg,
+        assrt=assrt_cfg,
+        subdl=subdl_cfg,
         subtitles=subtitles_cfg,
         jackett=jackett_cfg,
         tmdb=tmdb_cfg,

@@ -89,10 +89,19 @@ class OpensubtitlesError(Exception):
         status_code: int | None = None,
         body: bytes = b"",
         code: str = "opensubtitles_error",
+        site: str = "opensubtitles",
+        endpoint: str = "",
+        retryable: bool | None = None,
+        detail: str = "",
     ):
         self.status_code = status_code
         self.body = body
         self.code = code
+        # 与 SubhdError/AssrtError/SubdlError 对齐的结构化元信息
+        self.site = site
+        self.endpoint = endpoint
+        self.retryable = retryable
+        self.detail = detail
         super().__init__(message)
 
 
