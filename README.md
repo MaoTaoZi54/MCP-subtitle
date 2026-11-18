@@ -1,12 +1,15 @@
 # MCP-subtitle · NAS 媒体工具箱
 
-**主力形态是 Octop 插件** [nas-octop-plugin](nas-octop-plugin)；[nas-app](nas-app) 与 [nas-mcp](nas-mcp) 作为备选保留。三种交付形态共享同一份媒体能力内核 **0.19.31**（扫描/字幕/资源搜索/整理），装配层能力分工如下：
+**主力形态是 Octop 插件** [nas-octop-plugin](https://github.com/MaoTaoZi54/nas-octop-plugin)；[nas-app](https://github.com/MaoTaoZi54/nas-app) 与 [nas-mcp](https://github.com/MaoTaoZi54/nas-mcp) 作为备选保留。三种交付形态共享同一份媒体能力内核 **0.19.31**（扫描/字幕/资源搜索/整理），装配层能力分工如下：
+
+> 三个子项目均为独立仓库，在本仓以 submodule 关联。克隆请带 `--recursive`：
+> `git clone --recursive https://github.com/MaoTaoZi54/MCP-subtitle.git`
 
 | 子项目 | 形态 | 说明 |
 | --- | --- | --- |
-| [nas-octop-plugin](nas-octop-plugin) | Octop 进程内插件 | **34 个工具**（28 业务 + `nas_save_config` + `nas_doctor` + `nas_get_logs` + 3 个 `nas_job_*`），配置可用对话/表单/编辑 config.yaml |
-| [nas-mcp](nas-mcp) | 独立 stdio MCP 服务 | **28 个业务工具**，与 nas-app 业务面一致（字幕两工具叫 `subtitle_*`；无 `nas_save_config` / `nas_job_*` / `nas_doctor` / `nas_get_logs` 等插件专属能力） |
-| [nas-app](nas-app) | 独立应用 | **28 个业务工具**；8669 提供 Web UI + HTTP API，8670 内置 MCP Streamable HTTP；支持 **Docker** 与 **飞牛 fnOS 应用商店（.fpk）** |
+| [nas-octop-plugin](https://github.com/MaoTaoZi54/nas-octop-plugin) | Octop 进程内插件 | **34 个工具**（28 业务 + `nas_save_config` + `nas_doctor` + `nas_get_logs` + 3 个 `nas_job_*`），配置可用对话/表单/编辑 config.yaml |
+| [nas-mcp](https://github.com/MaoTaoZi54/nas-mcp) | 独立 stdio MCP 服务 | **28 个业务工具**，与 nas-app 业务面一致（字幕两工具叫 `subtitle_*`；无 `nas_save_config` / `nas_job_*` / `nas_doctor` / `nas_get_logs` 等插件专属能力） |
+| [nas-app](https://github.com/MaoTaoZi54/nas-app) | 独立应用 | **28 个业务工具**；8669 提供 Web UI + HTTP API，8670 内置 MCP Streamable HTTP；支持 **Docker** 与 **飞牛 fnOS 应用商店（.fpk）** |
 
 ### 怎么选
 
@@ -26,4 +29,4 @@ docker compose up -d    # 打开 http://<NAS>:8669
 
 Octop 在「自定义 MCP」里填 `http://127.0.0.1:8670/mcp` + `Authorization: Bearer <令牌>` 即可直连同一服务。
 
-飞牛安装包构建、授权目录、安全边界、MCP 连接与 API 文档见 [nas-app/README.md](nas-app/README.md)。
+飞牛安装包构建、授权目录、安全边界、MCP 连接与 API 文档见 [nas-app README](https://github.com/MaoTaoZi54/nas-app#readme)。

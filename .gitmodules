@@ -1,0 +1,9 @@
+[submodule "nas-octop-plugin"]
+	path = nas-octop-plugin
+	url = https://github.com/MaoTaoZi54/nas-octop-plugin.git
+[submodule "nas-mcp"]
+	path = nas-mcp
+	url = https://github.com/MaoTaoZi54/nas-mcp.git
+[submodule "nas-app"]
+	path = nas-app
+	url = https://github.com/MaoTaoZi54/nas-app.git
